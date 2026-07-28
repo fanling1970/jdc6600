@@ -1,31 +1,6 @@
 #!/bin/bash
 # diy-part2.sh - 在 feeds install 之后执行
-echo "=== [DIY-P2] 开始配置第三方包和系统设置 ==="
 
-# ======================================
-# 1. 克隆第三方包（不在 feeds 中的包）
-# ======================================
-echo "--- 克隆 Argon 主题 ---"
-git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon || {
-    echo "❌ Argon 主题拉取失败"
-    exit 1
-}
-
-echo "--- 克隆 Argon 配置插件 ---"
-git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config || {
-    echo "❌ Argon 配置插件拉取失败"
-    exit 1
-}
-echo "✅ Argon 主题克隆完成"
-
-echo "--- 克隆 Athena LED 控制插件 ---"
-git clone --depth=1 https://github.com/NONGFAH/luci-app-athena-led package/luci-app-athena-led || {
-    echo "❌ Athena LED 插件拉取失败"
-    exit 1
-}
-chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led
-chmod +x package/luci-app-athena-led/root/usr/sbin/athena-led
-echo "✅ Athena LED 插件克隆完成"
 
 # ======================================
 # 2. 基础系统设置修改
