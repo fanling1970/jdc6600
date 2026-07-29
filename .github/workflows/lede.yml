@@ -9,7 +9,7 @@
 #
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 
-name: ax6600
+name: lede指定哈希值
 
 # 禁用自动触发，仅保留手动触发
 on:
