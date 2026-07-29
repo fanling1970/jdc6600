@@ -9,7 +9,7 @@
 #
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 
-name: ax6600不指定版本
+name: ax6600指定哈希值
 
 # 禁用自动触发，仅保留手动触发
 on:
@@ -139,14 +139,14 @@ jobs:
         df -hT $PWD
         echo "克隆 LEDE 源码..."
         git clone ${{ env.REPO_URL }} openwrt
-		if [ -n "${{ env.REPO_COMMIT }}" ]; then
-		  git -C openwrt checkout ${{ env.REPO_COMMIT }}
-		  echo "✅ 已锁定到 commit: ${{ env.REPO_COMMIT }}"
+        if [ -n "${{ env.REPO_COMMIT }}" ]; then
+          git -C openwrt checkout ${{ env.REPO_COMMIT }}
+          echo "✅ 已锁定到 commit: ${{ env.REPO_COMMIT }}"
         else
-		  git -C openwrt checkout ${{ env.REPO_BRANCH }}
-		  echo "✅ 已切换到分支: ${{ env.REPO_BRANCH }}"
+          git -C openwrt checkout ${{ env.REPO_BRANCH }}
+          echo "✅ 已切换到分支: ${{ env.REPO_BRANCH }}"
         fi
-		echo "✅ 源码克隆完成"
+        echo "✅ 源码克隆完成"
 
     - name: 加载自定义软件源
       run: |
