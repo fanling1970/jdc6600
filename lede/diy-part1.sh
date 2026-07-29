@@ -9,13 +9,11 @@ echo "=== [DIY-P1] 开始配置 feeds 源 ==="
 # ======================================
 echo "--- 添加 feeds 源 ---"
 
-# 在 diy-part1.sh 的 feeds 源部分添加
-# echo 'src-git openclash https://github.com/vernesong/OpenClash.git' >> feeds.conf.default
-
 # 添加 helloworld（SSR 插件）
 echo 'src-git helloworld https://github.com/fw876/helloworld.git' >> feeds.conf.default
 
-# 添加 kenzok8 三方包源（含 dockerman）
+# ★ 添加 kenzok8 三方包源（含 dockerman）
+# 注意：只加 kenzo 一个就够了，不要加 small，避免引入过多包产生冲突
 echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages.git' >> feeds.conf.default
 
 # 添加 iStore 软件中心
@@ -37,6 +35,18 @@ sed -i '/^Package: luci-theme-argon$/,$ {/^$/d; /^Package:/a auto-selected 0' fe
 echo "✅ Lean 旧版 argon 已清除"
 
 # ======================================
+# 2b. ★ 彻底清除 luci 自带的 dockerman（关键！让 kenzo 三方源接管）
+# ======================================
+echo "--- 清除 luci 自带 dockerman，改用 kenzo 三方源 ---"
+# 删目录
+rm -rf feeds/luci/applications/luci-app-dockerman 2>/dev/null || true
+rm -rf feeds/luci/libs/luci-lib-docker 2>/dev/null || true
+# 清索引（让 feeds install 不会再从 luci 装）
+sed -i '/^Package: luci-app-dockerman$/,/^$/d' feeds/luci.index 2>/dev/null || true
+sed -i '/^Package: luci-lib-docker$/,/^$/d' feeds/luci.index 2>/dev/null || true
+echo "✅ luci 自带 dockerman 已清除，将由 kenzo 源提供"
+
+# ======================================
 # 3. 升级 Golang 到 1.26（适配新协议）
 # ======================================
 echo "--- 升级 Golang 到 1.26 ---"
@@ -49,6 +59,7 @@ echo "✅ Golang 升级完成"
 # ======================================
 echo "--- 清理 package/ 目录残留 ---"
 rm -rf package/luci-theme-argon package/luci-app-argon-config package/luci-app-athena-led 2>/dev/null || true
+rm -rf package/luci-app-dockerman package/luci-lib-docker 2>/dev/null || true
 echo "✅ package/ 目录清理完成"
 
 echo "✅ [DIY-P1] feeds 配置完成"
