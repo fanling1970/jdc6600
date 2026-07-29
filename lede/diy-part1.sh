@@ -14,7 +14,7 @@ echo 'src-git helloworld https://github.com/fw876/helloworld.git' >> feeds.conf.
 
 # ★ 添加 kenzok8 三方包源（含 dockerman）
 # 注意：只加 kenzo 一个就够了，不要加 small，避免引入过多包产生冲突
-echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages.git' >> feeds.conf.default
+# echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages.git' >> feeds.conf.default
 
 # 添加 iStore 软件中心
 echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
