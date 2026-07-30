@@ -9,7 +9,7 @@
 #
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 
-name: ax6600-lede指定哈希值6月10日
+name: ax6600-lede指定哈希值6月23日
 
 # 禁用自动触发，仅保留手动触发
 on:
@@ -18,7 +18,7 @@ on:
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
-  REPO_COMMIT: 59d2d7d  # 锁定的黄金 commit
+  REPO_COMMIT: aabbe64  # 锁定的黄金 commit
   FEEDS_CONF: ax6600/feeds.conf.default
   CONFIG_FILE: ax6600/info.config
   DIY_P1_SH: ax6600/diy-part1.sh
