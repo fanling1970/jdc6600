@@ -1,4 +1,4 @@
-name: lede-ax6600指定哈希手动固件编译
+name: lede-ax6600指定哈希值手动固件编译
 # 仅手动触发，无自动编译规则
 on:
   workflow_dispatch:
@@ -43,12 +43,12 @@ jobs:
           git checkout de1795d
 
       - name: 4. 覆盖自定义 feeds.conf.default（内置第三方插件源）
-        run: cp -v ./lede/feeds.conf.default ./openwrt/feeds.conf.default
+        run: cp -v ./ax6600/feeds.conf.default ./openwrt/feeds.conf.default
 
       - name: 5. 执行前置自定义脚本 diy-part1.sh
         run: |
-          chmod +x ../lede/diy-part1.sh
-          ../lede/diy-part1.sh
+          chmod +x ../ax6600/diy-part1.sh
+          ../ax6600/diy-part1.sh
         working-directory: ./openwrt
 
       - name: 6. 更新并安装全部软件源 feeds
@@ -58,12 +58,12 @@ jobs:
         working-directory: ./openwrt
 
       - name: 7. 导入自定义编译配置 info.config
-        run: cp -v ./lede/info.config ./openwrt/.config
+        run: cp -v ./ax6600/info.config ./openwrt/.config
 
       - name: 8. 执行后置自定义脚本 diy-part2.sh
         run: |
-          chmod +x ../lede/diy-part2.sh
-          ../lede/diy-part2.sh
+          chmod +x ../ax6600/diy-part2.sh
+          ../ax6600/diy-part2.sh
         working-directory: ./openwrt
 
       - name: 9. 预编译生成完整配置
