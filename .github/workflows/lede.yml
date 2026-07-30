@@ -18,7 +18,7 @@ on:
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
-  REPO_COMMIT: de1795d  # 锁定的黄金 commit
+  REPO_COMMIT: 2ee5dbe  # 锁定的黄金 commit
   FEEDS_CONF: lede/feeds.conf.default
   CONFIG_FILE: lede/info.config
   DIY_P1_SH: lede/diy-part1.sh
