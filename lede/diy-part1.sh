@@ -37,14 +37,11 @@ echo "✅ Lean 旧版 argon 已清除"
 # ======================================
 # 2b. ★ 彻底清除 luci 自带的 dockerman（关键！让 kenzo 三方源接管）
 # ======================================
-echo "--- 清除 luci 自带 dockerman，改用 kenzo 三方源 ---"
-# 删目录
+# ★★★ 2b. 只清除 luci 自带的 dockerman 本体，保留 luci-lib-docker ★★★
 rm -rf feeds/luci/applications/luci-app-dockerman 2>/dev/null || true
-rm -rf feeds/luci/libs/luci-lib-docker 2>/dev/null || true
-# 清索引（让 feeds install 不会再从 luci 装）
 sed -i '/^Package: luci-app-dockerman$/,/^$/d' feeds/luci.index 2>/dev/null || true
-sed -i '/^Package: luci-lib-docker$/,/^$/d' feeds/luci.index 2>/dev/null || true
-echo "✅ luci 自带 dockerman 已清除，将由 kenzo 源提供"
+# 注意：luci-lib-docker 不删！
+echo "✅ luci 自带 dockerman 已清除（luci-lib-docker 保留）"
 
 # ======================================
 # 3. 升级 Golang 到 1.26（适配新协议）
