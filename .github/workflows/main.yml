@@ -1,4 +1,4 @@
-name: lede-ax6600指定哈希值手动固件编译6月20日
+name: lede-ax6600指定哈希值手动固件编译6月22日
 # 仅手动触发，无自动编译规则
 on:
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
         run: |
           git clone https://github.com/coolsnowwolf/lede.git openwrt
           cd openwrt
-          git checkout 2ee5dbe
+          git checkout bbe358f
 
       - name: 4. 覆盖自定义 feeds.conf.default（内置第三方插件源）
         run: cp -v ./ax6600/feeds.conf.default ./openwrt/feeds.conf.default
