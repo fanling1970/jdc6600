@@ -9,7 +9,7 @@
 #
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 
-name: lede指定哈希值
+name: lede指定哈希值6月20日
 
 # 禁用自动触发，仅保留手动触发
 on:
