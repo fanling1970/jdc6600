@@ -221,9 +221,12 @@ jobs:
           echo "==== DEBUG 合并之后的files内容 ===="
           ls -la files
 
-          [ -e files ] && mv -v files openwrt/files
-          echo "==== DEBUG openwrt/files ===="
-          ls -la openwrt/files || echo "openwrt/files missing"
+          # 重点：用rsync复制，避免mv嵌套问题，--delete可选，不要随便开
+          mkdir -p openwrt/files
+          rsync -av ./files/ openwrt/files/
+
+          echo "==== DEBUG openwrt/files 最终内容 ===="
+          ls -la openwrt/files
 
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           chmod +x $DIY_P2_SH
