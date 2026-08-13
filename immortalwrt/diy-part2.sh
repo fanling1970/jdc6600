@@ -123,4 +123,18 @@ sed -i '/CONFIG_PACKAGE_shadowsocks-rust/d' .config
 echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
 rm -rf feeds/packages/net/shadowsocks-rust
 
+# 修改 Docker 根目录到挂载盘
+cat > package/base-files/files/etc/uci-defaults/99-docker-data << 'EOF'
+#!/bin/sh
+mkdir -p /mnt/mmcblk0p27/docker
+if uci get dockerd.globals >/dev/null 2>&1; then
+    uci set dockerd.globals.data_root="/mnt/mmcblk0p27/docker"
+else
+    uci set dockerd.@globals[0].data_root="/mnt/mmcblk0p27/docker"
+fi
+uci commit dockerd
+exit 0
+EOF
+chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
+
 echo "=== diy-part2.sh 执行完成==="
