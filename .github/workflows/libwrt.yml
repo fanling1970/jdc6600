@@ -181,21 +181,19 @@ jobs:
 
     - name: 集成CPU温度自定义脚本
       run: |
-        mkdir -p files/sbin
-        echo '#!/bin/sh' > files/sbin/cputemp
-        echo '# 适配IPQ60xx平台的CPU温度读取' >> files/sbin/cputemp
-        echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> files/sbin/cputemp
-        echo '' >> files/sbin/cputemp
-        echo 'if [ -r "$TEMP_PATH" ]; then' >> files/sbin/cputemp
-        echo '    raw_temp=$(cat "$TEMP_PATH")' >> files/sbin/cputemp
-        echo '    temp_int=$(( raw_temp / 1000 ))' >> files/sbin/cputemp
-        echo '    temp_dec=$(( (raw_temp / 100) % 10 ))' >> files/sbin/cputemp
-        echo '    cpu_temp="${temp_int}.${temp_dec}"' >> files/sbin/cputemp
-        echo '    echo "CPU ${cpu_temp}°C"' >> files/sbin/cputemp
-        echo 'else' >> files/sbin/cputemp
-        echo '    echo "CPU 0.0°C"' >> files/sbin/cputemp
-        echo 'fi' >> files/sbin/cputemp
-        chmod +x files/sbin/cputemp
+          mkdir -p temp_files/sbin
+          echo '#!/bin/sh' > temp_files/sbin/cpuinfo
+          echo '# 适配IPQ60xx iStore‑nas面板，仅输出纯数字温度' >> temp_files/sbin/cpuinfo
+          echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> temp_files/sbin/cpuinfo
+          echo '' >> temp_files/sbin/cpuinfo
+          echo 'if [ -r "$TEMP_PATH" ]; then' >> temp_files/sbin/cpuinfo
+          echo '    raw_temp=$(cat "$TEMP_PATH")' >> temp_files/sbin/cpuinfo
+          echo '    temp_int=$(( raw_temp / 1000 ))' >> temp_files/sbin/cpuinfo
+          echo '    echo "$temp_int"' >> temp_files/sbin/cpuinfo
+          echo 'else' >> temp_files/sbin/cpuinfo
+          echo '    echo "0"' >> temp_files/sbin/cpuinfo
+          echo 'fi' >> temp_files/sbin/cpuinfo
+          chmod +x temp_files/sbin/cpuinfo
 
     - name: 加载自定义配置
       run: |
