@@ -139,35 +139,9 @@ chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 # ====================== 生成全部自定义文件到openwrt/files ======================
 echo "==== 生成自定义文件 openwrt/files ===="
-mkdir -p files/sbin
 mkdir -p files/etc/hotplug.d/net
 mkdir -p files/etc/uci-defaults
 mkdir -p files/usr/share/rpcd/ucode
-
-# cputemp 温度脚本
-cat > files/sbin/cputemp <<'EOF'
-#!/bin/sh
-if [ -r "/sys/class/thermal/thermal_zone1/temp" ];then
-    raw=$(cat /sys/class/thermal/thermal_zone1/temp)
-elif [ -r "/sys/class/thermal/thermal_zone0/temp" ];then
-    raw=$(cat /sys/class/thermal/thermal_zone0/temp)
-else
-    echo 0
-    exit 0
-fi
-temp_int=$(( raw / 1000 ))
-echo "$temp_int"
-EOF
-chmod 755 files/sbin/cputemp
-
-# quickstart 调用外部温度脚本，刷机首次开机生效
-cat > files/etc/uci-defaults/97-quickstart-temp <<'EOF'
-#!/bin/sh
-uci set quickstart.@global[0].temp_script="/sbin/cputemp"
-uci commit quickstart
-exit 0
-EOF
-chmod 755 files/etc/uci-defaults/97-quickstart-temp
 
 # docker网桥hotplug脚本
 cat > files/etc/hotplug.d/net/90-docker-br-attach <<'EOF'
@@ -231,7 +205,7 @@ exit 0
 EOF
 chmod 755 files/etc/uci-defaults/99-init-docker-fw
 
-# autocore.uc ipq60xx首页温度修复
+# autocore.uc ipq60xx【状态‑概况】页面温度修复
 cat > files/usr/share/rpcd/ucode/autocore.uc <<'EOF'
 // ipq60xx cpu temp fix
 let fs = require("fs");
