@@ -80,12 +80,12 @@ echo "--- 修复 jdCloud ax6600 无限重启 ---"
 rm -rf package/kernel/mac80211/patches/nss/ath11k/999-900-bss-transition-handling.patch
 echo "✅ 已删除可能导致重启的补丁"
 
-# 修复 rust 编译问题，链接404，改用sed直接修改
+# 修复 rust 编译问题
 echo "--- 修复 Rust 编译问题 ---"
 sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
 echo "✅ Rust Makefile 已更新"
 
-# 添加无线状态检查脚本（调试用）【修复：先mkdir‑p】
+# 添加无线状态检查脚本
 echo "--- 添加无线状态检查脚本 ---"
 mkdir -p package/base-files/files/usr/bin
 cat > package/base-files/files/usr/bin/wifi-status << 'STATUSEOF'
@@ -116,7 +116,7 @@ STATUSEOF
 chmod +x package/base-files/files/usr/bin/wifi-status
 echo "✅ 无线状态检查脚本已添加"
 
-# 彻底屏蔽shadowsocks-rust独立包，避免意外编译报错
+# 彻底屏蔽shadowsocks-rust独立包
 sed -i '/CONFIG_PACKAGE_shadowsocks-rust/d' .config
 echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
 rm -rf feeds/packages/net/shadowsocks-rust
@@ -137,19 +137,7 @@ EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 
-# ====================== 2. quickstart修复：放弃patch，改用sed替换字符串 ======================
-# feeds install之后源码只是符号链接，patch命令无法使用；sed替换源码字符串
-echo "==== 修改quickstart，调用路径改为 /sbin/cputemp ===="
-QS_SRC=$(find feeds/ -name "system.c" -path "*jjm2473/quickstart*src*")
-if [ -n "$QS_SRC" ];then
-    echo "找到quickstart源码：$QS_SRC"
-    sed -i 's|/sbin/cpuinfo|/sbin/cputemp|g' "$QS_SRC"
-    echo "✅ quickstart 源码字符串替换完成"
-else
-    echo "⚠️警告：未找到quickstart system.c，iStore‑nas温度不会修复"
-fi
-
-# ====================== 3. 在openwrt/files生成全部自定义文件 ======================
+# ====================== 生成全部自定义文件到openwrt/files ======================
 echo "==== 生成自定义文件 openwrt/files ===="
 mkdir -p files/sbin
 mkdir -p files/etc/hotplug.d/net
@@ -172,7 +160,16 @@ echo "$temp_int"
 EOF
 chmod 755 files/sbin/cputemp
 
-# hotplug.d/net/90-docker-br-attach
+# quickstart 调用外部温度脚本，刷机首次开机生效
+cat > files/etc/uci-defaults/97-quickstart-temp <<'EOF'
+#!/bin/sh
+uci set quickstart.@global[0].temp_script="/sbin/cputemp"
+uci commit quickstart
+exit 0
+EOF
+chmod 755 files/etc/uci-defaults/97-quickstart-temp
+
+# docker网桥hotplug脚本
 cat > files/etc/hotplug.d/net/90-docker-br-attach <<'EOF'
 #!/bin/sh
 case "$ACTION" in
@@ -202,7 +199,7 @@ esac
 EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 
-# uci-defaults/98-dedup-docker-zone
+# 去重docker zone
 cat > files/etc/uci-defaults/98-dedup-docker-zone <<'EOF'
 #!/bin/sh
 while uci show firewall.@zone | grep -q '\.name=docker'; do
@@ -215,7 +212,7 @@ uci commit firewall
 EOF
 chmod 755 files/etc/uci-defaults/98-dedup-docker-zone
 
-# uci-defaults/99-init-docker-fw
+# 初始化docker防火墙zone
 cat > files/etc/uci-defaults/99-init-docker-fw <<'EOF'
 #!/bin/sh
 if ! uci show firewall.docker >/dev/null 2>&1; then
@@ -234,7 +231,7 @@ exit 0
 EOF
 chmod 755 files/etc/uci-defaults/99-init-docker-fw
 
-# autocore.uc ipq60xx温度修复
+# autocore.uc ipq60xx首页温度修复
 cat > files/usr/share/rpcd/ucode/autocore.uc <<'EOF'
 // ipq60xx cpu temp fix
 let fs = require("fs");
