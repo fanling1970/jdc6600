@@ -80,14 +80,14 @@ echo "--- 修复 jdCloud ax6600 无限重启 ---"
 rm -rf package/kernel/mac80211/patches/nss/ath11k/999-900-bss-transition-handling.patch
 echo "✅ 已删除可能导致重启的补丁"
 
-# 修复 rust 报错
+# 修复 rust 编译问题，链接404，改用sed直接修改
 echo "--- 修复 Rust 编译问题 ---"
-wget -O feeds/packages/lang/rust/Makefile https://raw.githubusercontent.com/aimetu/OpenWrt-Actions/refs/heads/main/patches/Makefile
 sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
 echo "✅ Rust Makefile 已更新"
 
-# 添加无线状态检查脚本（调试用）
+# 添加无线状态检查脚本（调试用）【修复：先mkdir‑p】
 echo "--- 添加无线状态检查脚本 ---"
+mkdir -p package/base-files/files/usr/bin
 cat > package/base-files/files/usr/bin/wifi-status << 'STATUSEOF'
 #!/bin/sh
 echo "=== JDC_AX6600 无线状态检查 ==="
@@ -122,6 +122,7 @@ echo "# CONFIG_PACKAGE_shadowsocks-rust is not set" >> .config
 rm -rf feeds/packages/net/shadowsocks-rust
 
 # 修改 Docker 根目录到挂载盘
+mkdir -p package/base-files/files/etc/uci-defaults
 cat > package/base-files/files/etc/uci-defaults/99-docker-data << 'EOF'
 #!/bin/sh
 mkdir -p /mnt/mmcblk0p27/docker
@@ -136,25 +137,17 @@ EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 
-# ====================== 2. quickstart补丁 + cputemp温度脚本 ======================
-echo "==== 打quickstart补丁，调用路径改为 /sbin/cputemp ===="
-cd feeds/nas
-cat > temp.patch <<'EOPATCH'
---- a/jjm2473/quickstart/src/system.c
-+++ b/jjm2473/quickstart/src/system.c
-@@ -228,7 +228,7 @@ int get_cpu_temp(char *buf, int size)
-        }
-
-        /* fallback: call /sbin/cpuinfo */
--       FILE *f = popen("/sbin/cpuinfo", "r");
-+       FILE *f = popen("/sbin/cputemp", "r");
-        if (!f)
-                return -1;
-        if (fgets(buf, size, f)) {
-EOPATCH
-patch -p1 < temp.patch
-rm -f temp.patch
-cd ../../
+# ====================== 2. quickstart修复：放弃patch，改用sed替换字符串 ======================
+# feeds install之后源码只是符号链接，patch命令无法使用；sed替换源码字符串
+echo "==== 修改quickstart，调用路径改为 /sbin/cputemp ===="
+QS_SRC=$(find feeds/ -name "system.c" -path "*jjm2473/quickstart*src*")
+if [ -n "$QS_SRC" ];then
+    echo "找到quickstart源码：$QS_SRC"
+    sed -i 's|/sbin/cpuinfo|/sbin/cputemp|g' "$QS_SRC"
+    echo "✅ quickstart 源码字符串替换完成"
+else
+    echo "⚠️警告：未找到quickstart system.c，iStore‑nas温度不会修复"
+fi
 
 # ====================== 3. 在openwrt/files生成全部自定义文件 ======================
 echo "==== 生成自定义文件 openwrt/files ===="
