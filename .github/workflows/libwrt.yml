@@ -14,19 +14,19 @@
 # 修复2：修正lisaac仓库目录结构，提取Makefile到包根目录
 #
 
-name: immortalwrt
+name: libwrt
 
 # 禁用自动触发，仅保留手动触发
 on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/VIKINGYFY/immortalwrt.git
-  REPO_BRANCH: main
-  FEEDS_CONF: immortalwrt/feeds.conf.default
-  CONFIG_FILE: immortalwrt/info.config
-  DIY_P1_SH: immortalwrt/diy-part1.sh
-  DIY_P2_SH: immortalwrt/diy-part2.sh
+  REPO_URL: https://github.com/libwrt/libwrt.git
+  REPO_BRANCH: 25.12-nss
+  FEEDS_CONF: libwrt/feeds.conf.default
+  CONFIG_FILE: libwrt/info.config
+  DIY_P1_SH: libwrt/diy-part1.sh
+  DIY_P2_SH: libwrt/diy-part2.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_COWTRANSFER: false
@@ -136,7 +136,7 @@ jobs:
         run: |
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: 加载自定义软件源 diy-part1
+      - name: 加载自定义软件源
         run: |
           [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $DIY_P1_SH
@@ -185,8 +185,49 @@ jobs:
       - name: 安装软件源
         run: cd openwrt && ./scripts/feeds install -a
 
-      - name: 加载配置 & 执行 diy‑part2.sh
+      - name: 集成CPU温度自定义脚本
         run: |
+          mkdir -p temp_files/sbin
+          echo '#!/bin/sh' > temp_files/sbin/cpuinfo
+          echo '# 适配IPQ60xx平台的CPU温度读取' >> temp_files/sbin/cpuinfo
+          echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> temp_files/sbin/cpuinfo
+          echo '' >> temp_files/sbin/cpuinfo
+          echo 'if [ -r "$TEMP_PATH" ]; then' >> temp_files/sbin/cpuinfo
+          echo '    raw_temp=$(cat "$TEMP_PATH")' >> temp_files/sbin/cpuinfo
+          echo '    temp_int=$(( raw_temp / 1000 ))' >> temp_files/sbin/cpuinfo
+          echo '    temp_dec=$(( (raw_temp / 100) % 10 ))' >> temp_files/sbin/cpuinfo
+          echo '    cpu_temp="${temp_int}.${temp_dec}"' >> temp_files/sbin/cpuinfo
+          echo '    echo "CPU ${cpu_temp}°C"' >> temp_files/sbin/cpuinfo
+          echo 'else' >> temp_files/sbin/cpuinfo
+          echo '    echo "CPU 0.0°C"' >> temp_files/sbin/cpuinfo
+          echo 'fi' >> temp_files/sbin/cpuinfo
+          chmod +x temp_files/sbin/cpuinfo
+
+      - name: 加载自定义配置
+        run: |
+          echo "==== DEBUG 工作目录 ===="
+          ls -la
+          echo "==== DEBUG git仓库files ===="
+          ls -la files || echo "GIT files MISSING !!"
+          echo "==== DEBUG temp_files ===="
+          ls -la temp_files || echo "temp_files missing"
+
+          # 将运行时生成的文件合并到git的files目录
+          if [ -d temp_files ]; then
+            cp -r temp_files/* files/
+            rm -rf temp_files
+          fi
+
+          echo "==== DEBUG 合并之后的files内容 ===="
+          ls -la files
+
+          # 重点：用rsync复制，避免mv嵌套问题，--delete可选，不要随便开
+          mkdir -p openwrt/files
+          rsync -av ./files/ openwrt/files/
+
+          echo "==== DEBUG openwrt/files 最终内容 ===="
+          ls -la openwrt/files
+
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           chmod +x $DIY_P2_SH
           cd openwrt
@@ -220,7 +261,7 @@ jobs:
         uses: actions/upload-artifact@main
         if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
         with:
-          name: immortalwrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          name: libwrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: openwrt/bin
 
       - name: 整理文件
@@ -236,7 +277,7 @@ jobs:
         uses: actions/upload-artifact@main
         if: steps.organize.outputs.status == 'success' && !cancelled()
         with:
-          name: immortalwrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          name: libwrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
 
       - name: 上传固件到CowTransfer
