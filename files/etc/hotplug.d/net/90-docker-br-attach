@@ -1,0 +1,25 @@
+#!/bin/sh
+# compose网桥动态加入docker zone
+
+[ "${ACTION}" != "add" ] && [ "${ACTION}" != "remove" ] && exit 0
+echo "${INTERFACE}" | grep -q "^br-" || exit 0
+
+ZONE="docker"
+uci get firewall.${ZONE} >/dev/null 2>&1 || exit 0
+
+case "${ACTION}" in
+add)
+    if ! uci show firewall.${ZONE} 2>/dev/null | grep -q "device='${INTERFACE}'"; then
+        uci add_list firewall.${ZONE}.device="${INTERFACE}"
+        uci commit firewall
+        /etc/init.d/firewall reload >/dev/null 2>&1
+    fi
+;;
+remove)
+    uci del_list firewall.${ZONE}.device="${INTERFACE}" 2>/dev/null
+    uci commit firewall
+    /etc/init.d/firewall reload >/dev/null 2>&1
+;;
+esac
+
+exit 0

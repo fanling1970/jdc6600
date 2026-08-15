@@ -1,0 +1,24 @@
+#!/bin/sh
+# 首次开机预制 docker 防火墙区域，仅不存在时创建
+
+if ! uci get firewall.docker >/dev/null 2>&1; then
+    uci add firewall zone
+    uci rename firewall.@zone[-1] "docker"
+    uci set firewall.docker.input='ACCEPT'
+    uci set firewall.docker.output='ACCEPT'
+    uci set firewall.docker.forward='ACCEPT'
+    uci set firewall.docker.name='docker'
+    uci add_list firewall.docker.device='docker0'
+
+    uci add firewall forwarding
+    uci set firewall.@forwarding[-1].src='docker'
+    uci set firewall.@forwarding[-1].dest='lan'
+
+    uci add firewall forwarding
+    uci set firewall.@forwarding[-1].src='docker'
+    uci set firewall.@forwarding[-1].dest='wan'
+
+    uci commit firewall
+fi
+
+exit 0
