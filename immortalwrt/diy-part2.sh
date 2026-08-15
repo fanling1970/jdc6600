@@ -84,12 +84,14 @@ echo "✅ 已删除可能导致重启的补丁"
 
 # 修复 rust 报错
 echo "--- 修复 Rust 编译问题 ---"
-wget -O feeds/packages/lang/rust/Makefile https://raw.githubusercontent.com/aimetu/OpenWrt-Actions/refs/heads/main/patches/Makefile
+# 原链接404失效，注释掉wget下载
+# wget -O feeds/packages/lang/rust/Makefile https://raw.githubusercontent.com/aimetu/OpenWrt-Actions/refs/heads/main/patches/Makefile
 sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
 echo "✅ Rust Makefile 已更新"
 
 # 添加无线状态检查脚本（调试用）
 echo "--- 添加无线状态检查脚本 ---"
+mkdir -p package/base-files/files/usr/bin
 cat > package/base-files/files/usr/bin/wifi-status << 'STATUSEOF'
 #!/bin/sh
 echo "=== JDC_AX6600 无线状态检查 ==="
