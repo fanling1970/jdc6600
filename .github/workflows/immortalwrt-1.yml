@@ -214,7 +214,7 @@ jobs:
 
           # 将运行时生成的文件合并到git的files目录
           if [ -d temp_files ]; then
-            cp -r temp_files/* files/
+            rsync -av temp_files/ files/
             rm -rf temp_files
           fi
 
