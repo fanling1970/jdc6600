@@ -1,7 +1,39 @@
 #!/usr/bin/env bash
 set -e
 
-# ========= 从part1移过来，放在part2最开头 =========
+# ========== 【关键】feeds install 之后的二次拦截 ==========
+echo ">>> [Part2] 卸载官方 argon，重装 jerrykuku 原版"
+
+# 1. 再次删除官方副本（feeds install 后它们又回来了）
+rm -rf package/feeds/luci/luci-theme-argon 2>/dev/null || true
+rm -rf package/feeds/luci/luci-app-argon-config 2>/dev/null || true
+rm -rf feeds/luci/themes/luci-theme-argon 2>/dev/null || true
+rm -rf feeds/luci/applications/luci-app-argon-config 2>/dev/null || true
+
+# 2. 用 feeds 命令正式卸载（清理索引里的官方记录）
+./scripts/feeds uninstall luci-theme-argon 2>/dev/null || true
+./scripts/feeds uninstall luci-app-argon-config 2>/dev/null || true
+
+# 3. 把我们 part1 克隆到 package/ 下的原版重新注册进 feeds 索引
+./scripts/feeds install -p package luci-theme-argon 2>/dev/null || true
+./scripts/feeds install -p package luci-app-argon-config 2>/dev/null || true
+
+# 4. 验证：此时应该只剩 jerrykuku 原版
+echo ">>> 验证 argon 包状态："
+./scripts/feeds list | grep argon || echo "(无 argon 包)"
+ls -d package/luci-theme-argon package/luci-app-argon-config 2>/dev/null && echo "✅ 原版目录存在"
+
+# ========== 修改 .config（强制勾选原版、取消官方版）==========
+if [ -f .config ]; then
+  # 先取消所有可能的旧勾选
+  sed -i 's/CONFIG_PACKAGE_luci-theme-argon=y/# CONFIG_PACKAGE_luci-theme-argon is not set/' .config
+  sed -i 's/CONFIG_PACKAGE_luci-app-argon-config=y/# CONFIG_PACKAGE_luci-app-argon-config is not set/' .config
+  sed -i 's/CONFIG_PACKAGE_luci-theme-bootstrap=y/# CONFIG_PACKAGE_luci-theme-bootstrap is not set/' .config
+  # 追加原版勾选
+  echo -e "\nCONFIG_PACKAGE_luci-theme-argon=y\nCONFIG_PACKAGE_luci-app-argon-config=y" >> .config
+fi
+
+# ========== 设置 LuCI 默认主题为 argon ==========
 LUCI_MAKE="feeds/luci/collections/luci/Makefile"
 if [ -f "${LUCI_MAKE}" ]; then
     sed -i 's/LUCI_DEFAULT_THEME:=bootstrap/LUCI_DEFAULT_THEME:=argon/' "${LUCI_MAKE}"
@@ -10,14 +42,6 @@ if [ -f "${LUCI_MAKE}" ]; then
 else
     echo "⚠️ 找不到LuCI Makefile，跳过默认主题修改"
 fi
-
-# 修改.config配置
-if [ -f .config ]; then
-  sed -i 's/CONFIG_PACKAGE_luci-theme-bootstrap=y/# CONFIG_PACKAGE_luci-theme-bootstrap is not set/' .config
-  echo -e "\nCONFIG_PACKAGE_luci-theme-argon=y\nCONFIG_PACKAGE_luci-app-argon-config=y" >> .config
-fi
-
-
 
 # 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
