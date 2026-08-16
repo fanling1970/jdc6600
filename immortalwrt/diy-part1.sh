@@ -14,14 +14,14 @@ for i in {1..3}; do
   sleep 2
 done
 
-# 拉取argon-config，完整克隆（不设depth 1）以便后面能回退到指定commit
+# 拉取argon-config，完整克隆，并指定master分支
 echo "Cloning jerrykuku/luci-app-argon-config..."
 for i in {1..3}; do
-  git clone --single-branch --branch main https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config && break
+  git clone --single-branch --branch master https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config && break
   sleep 2
 done
 
-# 回退到拾色器正常可用版本（现在完整克隆，reset一定会成功）
+# 回退到拾色器正常可用版本
 cd package/luci-app-argon-config
 git reset --hard 918e849040e04517425104306223710966229623
 cd ../../
