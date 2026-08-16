@@ -226,7 +226,7 @@ jobs:
           rsync -av ./files/ openwrt/files/
 
           # ==========新增：编译阶段强制赋予脚本可执行权限，绕过Windows Git权限丢失问题==========
-          chmod 755 openwrt/files/etc/uci-defaults/* 2>/dev/null || true
+          chmod 755 openwrt/files/etc/uci-defaults/*.sh 2>/dev/null || true
           chmod 755 openwrt/files/etc/hotplug.d/net/* 2>/dev/null || true
 
           echo "==== DEBUG openwrt/files 最终内容 ===="
