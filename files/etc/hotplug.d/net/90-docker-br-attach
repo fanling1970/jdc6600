@@ -1,25 +1,25 @@
 #!/bin/sh
-# compose网桥动态加入docker zone
+case "$ACTION" in
+add|remove|reload)
+        # 判断docker section是否存在
+        if ! uci show firewall.docker >/dev/null 2>&1; then
+                # 一次性完整创建docker zone，不使用rename，规避fw4时序bug
+                uci add firewall zone
+                idx=$(uci show firewall.@zone[-1])
+                uci set ${idx}.name='docker'
+                uci set ${idx}.input='ACCEPT'
+                uci set ${idx}.output='ACCEPT'
+                uci set ${idx}.forward='ACCEPT'
+                uci set ${idx}.masq='1'
+                uci add_list ${idx}.network='docker'
+        fi
 
-[ "${ACTION}" != "add" ] && [ "${ACTION}" != "remove" ] && exit 0
-echo "${INTERFACE}" | grep -q "^br-" || exit 0
+        # 重置device列表，收集全部docker compose网桥 br‑*
+        uci del firewall.docker.device
+        for dev in $(ls /sys/class/net | grep "^br-"); do
+                uci add_list firewall.docker.device="$dev"
+        done
 
-ZONE="docker"
-uci get firewall.${ZONE} >/dev/null 2>&1 || exit 0
-
-case "${ACTION}" in
-add)
-    if ! uci show firewall.${ZONE} 2>/dev/null | grep -q "device='${INTERFACE}'"; then
-        uci add_list firewall.${ZONE}.device="${INTERFACE}"
         uci commit firewall
-        /etc/init.d/firewall reload >/dev/null 2>&1
-    fi
-;;
-remove)
-    uci del_list firewall.${ZONE}.device="${INTERFACE}" 2>/dev/null
-    uci commit firewall
-    /etc/init.d/firewall reload >/dev/null 2>&1
-;;
+        ;;
 esac
-
-exit 0

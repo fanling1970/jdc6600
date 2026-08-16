@@ -1,24 +1,8 @@
 #!/bin/sh
-# 开机扫描，清理重复docker zone
-
-DOCKER_ZONES=$(uci show firewall 2>/dev/null | grep -E "^firewall\.[a-zA-Z0-9_]+\.name='docker'" | awk -F'.' '{print $2}' | sort -u)
-
-COUNT=$(echo "${DOCKER_ZONES}" | grep -c .)
-
-if [ "${COUNT}" -gt 1 ]; then
-    FIRST=""
-    for z in ${DOCKER_ZONES}; do
-        if [ -z "${FIRST}" ]; then
-            FIRST="${z}"
-            continue
-        fi
-        uci delete firewall.${z} 2>/dev/null
-        for idx in $(uci show firewall 2>/dev/null | grep -E "^firewall\@forwarding\[[0-9]+\]\.(src|dest)='docker'" | grep -oP '\[\K[0-9]+' | sort -ru); do
-            uci delete firewall.@forwarding[${idx}] 2>/dev/null
-        done
-    done
-    uci commit firewall
-    /etc/init.d/firewall reload >/dev/null 2>&1
-fi
-
-exit 0
+# 清理重复docker zone，兼容ash，不使用@zone数组遍历
+while uci show firewall | grep -q "firewall.@zone\[[0-9]*\].name='docker'"; do
+    dup_idx=$(uci show firewall | grep "firewall.@zone\[[0-9]*\].name='docker'" | sed -n '2{s/^firewall.@zone\[\([0-9]*\)\].name=.*/\1/p;q}')
+    [ -z "$dup_idx" ] && break
+    uci del firewall.@zone["$dup_idx"]
+done
+uci commit firewall

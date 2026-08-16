@@ -14,7 +14,7 @@
 # 修复2：修正lisaac仓库目录结构，提取Makefile到包根目录
 #
 
-name: immortalwrt
+name: immortalwrt-1
 
 # 禁用自动触发，仅保留手动触发
 on:
@@ -187,21 +187,22 @@ jobs:
 
       - name: 集成CPU温度自定义脚本
         run: |
-          mkdir -p temp_files/sbin
-          echo '#!/bin/sh' > temp_files/sbin/cpuinfo
-          echo '# 适配IPQ60xx平台的CPU温度读取' >> temp_files/sbin/cpuinfo
-          echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> temp_files/sbin/cpuinfo
-          echo '' >> temp_files/sbin/cpuinfo
-          echo 'if [ -r "$TEMP_PATH" ]; then' >> temp_files/sbin/cpuinfo
-          echo '    raw_temp=$(cat "$TEMP_PATH")' >> temp_files/sbin/cpuinfo
-          echo '    temp_int=$(( raw_temp / 1000 ))' >> temp_files/sbin/cpuinfo
-          echo '    temp_dec=$(( (raw_temp / 100) % 10 ))' >> temp_files/sbin/cpuinfo
-          echo '    cpu_temp="${temp_int}.${temp_dec}"' >> temp_files/sbin/cpuinfo
-          echo '    echo "CPU ${cpu_temp}°C"' >> temp_files/sbin/cpuinfo
-          echo 'else' >> temp_files/sbin/cpuinfo
-          echo '    echo "CPU 0.0°C"' >> temp_files/sbin/cpuinfo
-          echo 'fi' >> temp_files/sbin/cpuinfo
-          chmod +x temp_files/sbin/cpuinfo
+          mkdir -p temp_files/usr/bin
+          echo '#!/bin/sh' > temp_files/usr/bin/cpuinfo-custom
+          echo '# 适配IPQ60xx平台的CPU温度读取' >> temp_files/usr/bin/cpuinfo-custom
+          echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> temp_files/usr/bin/cpuinfo-custom
+          echo '' >> temp_files/usr/bin/cpuinfo-custom
+          echo 'if [ -r "$TEMP_PATH" ]; then' >> temp_files/usr/bin/cpuinfo-custom
+          echo '    raw_temp=$(cat "$TEMP_PATH")' >> temp_files/usr/bin/cpuinfo-custom
+          echo '    temp_int=$(( raw_temp / 1000 ))' >> temp_files/usr/bin/cpuinfo-custom
+          echo '    temp_dec=$(( (raw_temp / 100) % 10 ))' >> temp_files/usr/bin/cpuinfo-custom
+          echo '    cpu_temp="${temp_int}.${temp_dec}"' >> temp_files/usr/bin/cpuinfo-custom
+          echo '    echo "CPU ${cpu_temp}°C"' >> temp_files/usr/bin/cpuinfo-custom
+          echo 'else' >> temp_files/usr/bin/cpuinfo-custom
+          echo '    echo "CPU 0.0°C"' >> temp_files/usr/bin/cpuinfo-custom
+          echo 'fi' >> temp_files/usr/bin/cpuinfo-custom
+          chmod +x temp_files/usr/bin/cpuinfo-custom
+
 
       - name: 加载自定义配置
         run: |
@@ -221,17 +222,23 @@ jobs:
           echo "==== DEBUG 合并之后的files内容 ===="
           ls -la files
 
-          # 重点：用rsync复制，避免mv嵌套问题，--delete可选，不要随便开
-          mkdir -p openwrt/files
-          rsync -av ./files/ openwrt/files/
+          # 清理可能残留的冲突文件（避免与autocore包冲突）
+          rm -f files/sbin/cpuinfo
+          rm -f openwrt/package/base-files/files/sbin/cpuinfo
 
-          echo "==== DEBUG openwrt/files 最终内容 ===="
-          ls -la openwrt/files
+          # ==========修改此处：复制进base‑files，固件打包生效==========
+          rsync -av ./files/ openwrt/package/base-files/files/
+
+          echo "==== DEBUG：校验复制结果 ===="
+          ls -la openwrt/package/base-files/files/etc/hotplug.d/net
+          ls -la openwrt/package/base-files/files/etc/uci-defaults
+          ls -la openwrt/package/base-files/files/usr/share/rpcd/ucode
 
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           chmod +x $DIY_P2_SH
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P2_SH
+
 
       - name: 下载软件包
         id: package
