@@ -1,14 +1,16 @@
-#!/bin/bash
-#
-# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# File name: diy-part2.sh
-# Description: OpenWrt DIY script part 2 (After Update feeds)
-#
+#!/usr/bin/env bash
+set -e
+
+# ==========设置默认Argon主题，part2阶段执行，feeds已经完整展开==========
+LUCI_MAKE="feeds/luci/collections/luci/Makefile"
+if [ -f "${LUCI_MAKE}" ]; then
+    sed -i 's/LUCI_DEFAULT_THEME:=bootstrap/LUCI_DEFAULT_THEME:=argon/' "${LUCI_MAKE}"
+    sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' "${LUCI_MAKE}"
+    echo "✅ 修改LuCI默认主题为argon完成"
+else
+    echo "⚠️ 警告：未找到LuCI集合Makefile，跳过默认主题修改"
+fi
+
 
 # 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
