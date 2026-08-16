@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-# ==========设置默认Argon主题，part2阶段执行，feeds已经完整展开==========
+# ========= 从part1移过来，放在part2最开头 =========
 LUCI_MAKE="feeds/luci/collections/luci/Makefile"
 if [ -f "${LUCI_MAKE}" ]; then
     sed -i 's/LUCI_DEFAULT_THEME:=bootstrap/LUCI_DEFAULT_THEME:=argon/' "${LUCI_MAKE}"
     sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' "${LUCI_MAKE}"
-    echo "✅ 修改LuCI默认主题为argon完成"
+    echo "✅ 设置LuCI默认主题为argon"
 else
-    echo "⚠️ 警告：未找到LuCI集合Makefile，跳过默认主题修改"
+    echo "⚠️ 找不到LuCI Makefile，跳过默认主题修改"
 fi
+
+# 修改.config配置
+if [ -f .config ]; then
+  sed -i 's/CONFIG_PACKAGE_luci-theme-bootstrap=y/# CONFIG_PACKAGE_luci-theme-bootstrap is not set/' .config
+  echo -e "\nCONFIG_PACKAGE_luci-theme-argon=y\nCONFIG_PACKAGE_luci-app-argon-config=y" >> .config
+fi
+
 
 
 # 修改 device 设备名称
