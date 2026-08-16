@@ -15,7 +15,6 @@ rm -f tmp/info/.feeds-luci.index
 rm -f tmp/.packageinfo
 
 # ========== 2. 确保原版源码在正确位置 ==========
-# part1 已经克隆到了 package/ 下，我们确认一下
 if [ ! -d "package/luci-theme-argon" ] || [ ! -d "package/luci-app-argon-config" ]; then
     echo "❌ 错误：原版 Argon 源码不存在！"
     echo "请检查 part1 是否成功克隆了源码"
@@ -25,13 +24,13 @@ fi
 # ========== 3. 直接修改 .config，强制勾选原版 ==========
 if [ -f .config ]; then
     echo "修改 .config，强制使用原版 Argon..."
-    
+
     # 先取消所有可能的 argon 相关勾选
     sed -i '/CONFIG_PACKAGE_luci-theme-argon/d' .config
     sed -i '/CONFIG_PACKAGE_luci-app-argon-config/d' .config
     sed -i '/CONFIG_PACKAGE_luci-theme-bootstrap/d' .config
-    
-    # 强制写入原版勾选（关键：不依赖 feeds）
+
+    # 强制写入原版勾选（package目录优先级高于feeds）
     echo "" >> .config
     echo "# 强制使用 jerrykuku 原版 Argon" >> .config
     echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
@@ -39,23 +38,20 @@ if [ -f .config ]; then
     echo "# CONFIG_PACKAGE_luci-theme-bootstrap is not set" >> .config
 fi
 
-# ========== 4. 修改 LuCI 默认主题 ==========
-LUCI_MAKE="feeds/luci/collections/luci/Makefile"
-if [ -f "${LUCI_MAKE}" ]; then
-    sed -i 's/LUCI_DEFAULT_THEME:=bootstrap/LUCI_DEFAULT_THEME:=argon/' "${LUCI_MAKE}"
-    sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' "${LUCI_MAKE}"
-    echo "✅ 设置 LuCI 默认主题为 argon"
-fi
+# ========== 4. uci‑defaults 首次开机设置默认主题（替代修改feeds下Makefile） ==========
+echo "写入uci-defaults，固件开机自动设置argon为默认主题"
+mkdir -p package/base-files/files/etc/uci-defaults
+cat > package/base-files/files/etc/uci-defaults/99-set-argon-default <<'EOF'
+#!/bin/sh
+uci set luci.main.mediaurlbase='/luci-static/argon'
+uci commit luci
+exit 0
+EOF
+chmod 755 package/base-files/files/etc/uci-defaults/99-set-argon-default
 
 # ========== 5. 验证：检查 .config 中的 argon 配置 ==========
 echo ">>> 验证 .config 中的 argon 配置："
 grep -E "CONFIG_PACKAGE_luci-(theme|app)-argon" .config || echo "⚠️ 未找到 argon 配置"
-
-# ========== 6. 创建强制链接（双重保险）= ==========
-echo "创建符号链接，确保编译系统能找到原版..."
-mkdir -p package/feeds/luci/
-ln -sf ../luci-theme-argon package/feeds/luci/luci-theme-argon
-ln -sf ../luci-app-argon-config package/feeds/luci/luci-app-argon-config
 
 echo "✅ Argon 强制配置完成"
 
@@ -134,8 +130,6 @@ echo "✅ 已删除可能导致重启的补丁"
 
 # 修复 rust 报错
 echo "--- 修复 Rust 编译问题 ---"
-# 原链接404失效，注释掉wget下载
-# wget -O feeds/packages/lang/rust/Makefile https://raw.githubusercontent.com/aimetu/OpenWrt-Actions/refs/heads/main/patches/Makefile
 sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
 echo "✅ Rust Makefile 已更新"
 
