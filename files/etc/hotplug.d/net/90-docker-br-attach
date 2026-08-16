@@ -1,9 +1,11 @@
 #!/bin/sh
 case "$ACTION" in
 add|remove|reload)
-        # 判断docker section是否存在
+        if [ ! -d /sys/class/net/docker0 ]; then
+                exit 0
+        fi
+
         if ! uci show firewall.docker >/dev/null 2>&1; then
-                # 一次性完整创建docker zone，不使用rename，规避fw4时序bug
                 uci add firewall zone
                 idx=$(uci show firewall.@zone[-1])
                 uci set ${idx}.name='docker'
@@ -14,7 +16,6 @@ add|remove|reload)
                 uci add_list ${idx}.network='docker'
         fi
 
-        # 重置device列表，收集全部docker compose网桥 br‑*
         uci del firewall.docker.device
         for dev in $(ls /sys/class/net | grep "^br-"); do
                 uci add_list firewall.docker.device="$dev"
