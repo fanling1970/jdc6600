@@ -1,8 +1,0 @@
-#!/bin/sh
-# 清理重复docker zone，兼容ash，不使用@zone数组遍历
-while uci show firewall | grep -q "firewall.@zone\[[0-9]*\].name='docker'"; do
-    dup_idx=$(uci show firewall | grep "firewall.@zone\[[0-9]*\].name='docker'" | sed -n '2{s/^firewall.@zone\[\([0-9]*\)\].name=.*/\1/p;q}')
-    [ -z "$dup_idx" ] && break
-    uci del firewall.@zone["$dup_idx"]
-done
-uci commit firewall
