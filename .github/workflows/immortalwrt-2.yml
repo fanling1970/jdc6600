@@ -14,7 +14,7 @@
 # 修复2：修正lisaac仓库目录结构，提取Makefile到包根目录
 #
 
-name: immortalwrt
+name: immortalwrt-2
 
 # 禁用自动触发，仅保留手动触发
 on:
