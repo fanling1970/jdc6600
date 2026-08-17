@@ -1,65 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-echo ">>> [Part2] 强制使用 jerrykuku 原版 Argon（含 config 插件）"
-
-# ========== 1. 彻底清理官方版残留（两个包都清）==========
-echo "清理官方 argon 所有痕迹..."
-rm -rf package/feeds/luci/luci-theme-argon
-rm -rf package/feeds/luci/luci-app-argon-config
-rm -rf feeds/luci/themes/luci-theme-argon
-rm -rf feeds/luci/applications/luci-app-argon-config
-
-# 清理编译缓存
-rm -f tmp/info/.feeds-luci.index
-rm -f tmp/.packageinfo
-
-# ========== 2. 强制拉取 jerrykuku 原版 config 插件源码 ==========
-echo ">>> 强制拉取 jerrykuku 原版 argon-config 源码"
-rm -rf package/luci-app-argon-config
-git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config
-
-# 主题本体如果 part1 没拉到，这里兜底
-if [ ! -d "package/luci-theme-argon" ]; then
-    git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
-fi
-
-# ========== 3. 创建符号链接兜底（关键）==========
-mkdir -p package/feeds/luci/
-ln -sf ../luci-theme-argon package/feeds/luci/luci-theme-argon
-ln -sf ../luci-app-argon-config package/feeds/luci/luci-app-argon-config
-
-# ========== 4. 强制写死 .config ==========
-if [ -f .config ]; then
-    sed -i '/CONFIG_PACKAGE_luci-theme-argon/d' .config
-    sed -i '/CONFIG_PACKAGE_luci-app-argon-config/d' .config
-    sed -i '/CONFIG_PACKAGE_luci-theme-bootstrap/d' .config
-    
-    echo "" >> .config
-    echo "# 强制使用 jerrykuku 原版 Argon（含拾色器）" >> .config
-    echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
-    echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
-    echo "# CONFIG_PACKAGE_luci-theme-bootstrap is not set" >> .config
-fi
-
-# ========== 5. 设置 LuCI 默认主题 ==========
-LUCI_MAKE="feeds/luci/collections/luci/Makefile"
-if [ -f "${LUCI_MAKE}" ]; then
-    sed -i 's/LUCI_DEFAULT_THEME:=bootstrap/LUCI_DEFAULT_THEME:=argon/' "${LUCI_MAKE}"
-    sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' "${LUCI_MAKE}"
-    echo "✅ 设置 LuCI 默认主题为 argon"
-fi
-
-# ========== 6. 验证 ==========
-echo ">>> 验证 .config 中的 argon 配置："
-grep -E "CONFIG_PACKAGE_luci-(theme|app)-argon" .config || echo "⚠️ 未找到 argon 配置"
-
-echo "✅ Argon 强制配置完成（含 config 插件源码替换）"
-
-# ========== 你原有的无线/Docker/Rust 配置（保持不变）==========
-# ... 保留原有内容 ...
-
-
 # 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
 
