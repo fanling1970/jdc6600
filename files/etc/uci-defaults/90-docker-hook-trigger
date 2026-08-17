@@ -1,6 +1,0 @@
-# 给 dockerd 增加 post_start，docker就绪强制运行防火墙配置
-sed -i '/^start_service() {/a\
-post_start() {\
-    sleep 1\
-    /etc/hotplug.d/net/90-docker-br-attach run\
-}' openwrt/etc/init.d/dockerd
