@@ -128,4 +128,75 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
+
+# ======================================================
+# 集成 docker防火墙hotplug脚本，不再使用仓库files文件夹
+# ======================================================
+echo "--- 部署docker防火墙hotplug脚本 ---"
+mkdir -p package/base-files/files/etc/hotplug.d/net
+cat > package/base-files/files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
+#!/bin/sh
+
+do_fw_setup() {
+    # 创建/更新 docker zone，使用 device 匹配（fw4 br‑+通配）
+    if ! uci show firewall.docker >/dev/null 2>&1; then
+        uci add firewall zone
+        uci rename firewall.@zone[-1]="docker"
+    fi
+
+    uci set firewall.docker.name='docker'
+    uci set firewall.docker.input='ACCEPT'
+    uci set firewall.docker.output='ACCEPT'
+    uci set firewall.docker.forward='ACCEPT'
+    uci set firewall.docker.masq='1'
+
+    uci del firewall.docker.network
+    uci set firewall.docker.device='docker0'
+    uci add_list firewall.docker.device='br-+'
+
+    # 转发规则 docker→wan
+    if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
+        uci add firewall forwarding
+        uci rename firewall.@forwarding[-1]="fwd_docker_wan"
+        uci set firewall.fwd_docker_wan.src="docker"
+        uci set firewall.fwd_docker_wan.dest="wan"
+    fi
+
+    # 转发规则 lan→docker
+    if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
+        uci add firewall forwarding
+        uci rename firewall.@forwarding[-1]="fwd_lan_docker"
+        uci set firewall.fwd_lan_docker.src="lan"
+        uci set firewall.fwd_lan_docker.dest="docker"
+    fi
+
+    uci commit firewall
+    /etc/init.d/firewall reload >/dev/null 2>&1
+}
+
+# 网卡热插拔事件触发
+case "$ACTION" in
+add|remove)
+    [ "$INTERFACE" = "docker0" ] && do_fw_setup
+;;
+esac
+
+# 支持外部调用：/etc/hotplug.d/net/90-docker-br-attach run
+if [ "x$1" = "xrun" ]; then
+    do_fw_setup
+fi
+DOCKER_FW_EOF
+chmod 755 package/base-files/files/etc/hotplug.d/net/90-docker-br-attach
+
+# dockerd init.d 注入 post_start 钩子，docker就绪强制运行防火墙配置
+echo "--- 给dockerd增加post_start钩子 ---"
+sed -i '/^start_service() {/a\
+post_start() {\
+    sleep 1\
+    /etc/hotplug.d/net/90-docker-br-attach run\
+}' package/base-files/files/etc/init.d/dockerd
+
+# 可选：延后dockerd启动顺序START=99，缓解首次开机wan未就绪docker先启动
+sed -i '/^START=/c\START=99' package/base-files/files/etc/init.d/dockerd
+
 echo "=== diy-part2.sh 执行完成==="
