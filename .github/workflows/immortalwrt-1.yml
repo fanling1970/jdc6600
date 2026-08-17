@@ -230,8 +230,8 @@ jobs:
           chmod 755 openwrt/files/etc/hotplug.d/net/* 2>/dev/null || true
 
           echo "==== DEBUG openwrt/files 最终内容 ===="
-          ls -la openwrt/files/etc/uci-defaults 2>/dev/null || echo "uci‑defaults目录不存在"
           ls -la openwrt/files/etc/hotplug.d/net 2>/dev/null || echo "hotplug.d/net目录不存在"
+          ls -la openwrt/files/etc/uci-defaults 2>/dev/null || echo "uci-defaults目录不存在"
 
           # 增加一行调试：打印脚本权限，日志直接看是否755生效
           ls -la openwrt/files/etc/uci-defaults/90-docker-hook-trigger 2>/dev/null
