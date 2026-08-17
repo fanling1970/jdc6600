@@ -1,0 +1,13 @@
+#!/bin/sh
+
+cat > /etc/rc.local <<'EOFRC'
+#!/bin/sh
+sleep 9
+if [ -x /etc/hotplug.d/net/90-docker-br-attach ] && ip link show docker0 >/dev/null 2>&1;then
+    INTERFACE=docker ACTION=add /etc/hotplug.d/net/90-docker-br-attach
+fi
+exit 0
+EOFRC
+
+chmod +x /etc/rc.local
+exit 0
