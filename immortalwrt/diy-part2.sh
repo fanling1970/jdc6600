@@ -128,7 +128,6 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
-
 # ======================================================
 # 集成 docker防火墙hotplug脚本，不再使用仓库files文件夹
 # ======================================================
@@ -188,15 +187,134 @@ fi
 DOCKER_FW_EOF
 chmod 755 package/base-files/files/etc/hotplug.d/net/90-docker-br-attach
 
-# dockerd init.d 注入 post_start 钩子，docker就绪强制运行防火墙配置
-echo "--- 给dockerd增加post_start钩子 ---"
-sed -i '/^start_service() {/a\
-post_start() {\
-    sleep 1\
-    /etc/hotplug.d/net/90-docker-br-attach run\
-}' package/base-files/files/etc/init.d/dockerd
+# dockerd：直接输出完整带post_start的脚本到base‑files，覆盖feeds原版
+echo "--- 生成带post_start钩子的dockerd脚本 ---"
+mkdir -p package/base-files/files/etc/init.d
+cat > package/base-files/files/etc/init.d/dockerd << 'DOCKERD_INIT_EOF'
+#!/bin/sh
 
-# 可选：延后dockerd启动顺序START=99，缓解首次开机wan未就绪docker先启动
+USE_PROCD=1
+PROG=/usr/bin/dockerd
+
+start_service() {
+	local data_root
+	config_load dockerd
+	config_get data_root globals data_root "/opt/docker"
+
+	procd_open_instance
+	procd_set_param command "$PROG"
+	procd_append_param command --data-root "$data_root"
+
+	procd_set_param respawn
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+post_start() {
+	sleep 1
+	/etc/hotplug.d/net/90-docker-br-attach run
+}
+
+service_triggers()
+{
+	procd_add_reload_trigger "dockerd"
+}
+DOCKERD_INIT_EOF
+chmod 755 package/base-files/files/etc/init.d/dockerd
+
+# 可选：延后dockerd启动顺序 START=99
 sed -i '/^START=/c\START=99' package/base-files/files/etc/init.d/dockerd
+
+# ======================================================
+# 修复IPQ60xx首页CPU温度 autocore.uc
+# ======================================================
+echo "--- 部署修复版 autocore.uc（IPQ60xx温度） ---"
+mkdir -p package/base-files/files/usr/share/rpcd/ucode
+cat > package/base-files/files/usr/share/rpcd/ucode/autocore.uc << 'AUTOCORE_UC_EOF'
+/*
+ * Copyright (C) 2021-2025 ImmortalWrt
+ */
+
+'use strict';
+
+function read_file(path) {
+	let f;
+	try {
+		f = new File(path, "r");
+		let s = f.read();
+		f.close();
+		return s.trim();
+	} catch(e) {
+		return null;
+	}
+}
+
+function get_cpu_temp() {
+	/* IPQ60xx 优先读取 thermal_zone0，tsens‑ipq60xx type不包含cpu，绕过原type匹配 */
+	let val = read_file("/sys/class/thermal/thermal_zone0/temp");
+	if (val) {
+		let t = Number(val);
+		if (t > 0)
+			return Math.round(t / 1000);
+	}
+
+	/* 保留原有逻辑做兜底，兼容其他平台 */
+	let dir = new Dir("/sys/class/thermal");
+	for (let ent of dir) {
+		if (!ent.name.startsWith("thermal_zone"))
+			continue;
+
+		let type = read_file("/sys/class/thermal/" + ent.name + "/type");
+		if (!type || !type.includes("cpu"))
+			continue;
+
+		let raw = read_file("/sys/class/thermal/" + ent.name + "/temp");
+		if (!raw) continue;
+		let t = Number(raw);
+		if (t > 0)
+			return Math.round(t / 1000);
+	}
+	return null;
+}
+
+function get_cpu_usage() {
+	let s = read_file("/proc/stat");
+	if (!s) return null;
+	let m = s.match(/^cpu\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/);
+	if (!m) return null;
+	let user = Number(m[1]), nice = Number(m[2]), system = Number(m[3]), idle = Number(m[4]);
+	let total = user + nice + system + idle;
+	return { user, nice, system, idle, total };
+}
+
+function get_mem_info() {
+	let s = read_file("/proc/meminfo");
+	if (!s) return null;
+	let mem = {};
+	for (let line of s.split("\n")) {
+		let kv = line.match(/^(.+?):\s*(\d+)/);
+		if (!kv) continue;
+		mem[kv[1]] = Number(kv[2]) * 1024;
+	}
+	let total = mem.MemTotal;
+	let free = mem.MemFree + mem.Buffers + mem.Cached;
+	let used = total - free;
+	return { total, used };
+}
+
+function main() {
+	let rv = {};
+	rv.cpu_temp = get_cpu_temp();
+	rv.cpu_usage = get_cpu_usage();
+	rv.mem_info = get_mem_info();
+	return rv;
+}
+
+print(JSON.stringify(main()));
+AUTOCORE_UC_EOF
+
+chmod 644 package/base-files/files/usr/share/rpcd/ucode/autocore.uc
+echo "✅ autocore.uc 温度修复写入完成"
 
 echo "=== diy-part2.sh 执行完成==="
