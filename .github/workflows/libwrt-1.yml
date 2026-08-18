@@ -1,133 +1,347 @@
-name: libwrt 手动固件编译
-# 仅手动触发，无自动编译规则
+name: libwrt-1 云编译（完整版）
+
 on:
   workflow_dispatch:
     inputs:
-      TARGET_PROFILE:
-        description: 编译机型名称（jdc_ax6600）
+      REPO_URL:
+        description: '源码仓库地址'
         required: true
-        default: jdc_ax6600
-      COMPILE_THREAD:
-        description: 编译线程数
+        default: 'https://github.com/libwrt/libwrt.git'
+      REPO_BRANCH:
+        description: '源码分支'
         required: true
-        default: "4"
-      SAVE_LOG:
-        description: 是否保存完整编译日志
+        default: '25.12-nss'
+      CONFIG_FILE:
+        description: '配置文件路径'
+        required: false
+        default: 'libwrt/info.config'
+      DIY_P1_SH:
+        description: '前置脚本路径'
+        required: false
+        default: 'libwrt/diy-part1.sh'
+      DIY_P2_SH:
+        description: '后置脚本路径'
+        required: false
+        default: 'libwrt/diy-part2.sh'
+      UPLOAD_FIRMWARE:
+        description: '上传固件到 Actions Artifact'
         type: boolean
         default: true
+      UPLOAD_RELEASE:
+        description: '上传固件到 Releases'
+        type: boolean
+        default: false
+      TZ:
+        description: '时区'
+        required: true
+        default: 'Asia/Shanghai'
+
+env:
+  REPO_URL: ${{ github.event.inputs.REPO_URL }}
+  REPO_BRANCH: ${{ github.event.inputs.REPO_BRANCH }}
+  CONFIG_FILE: ${{ github.event.inputs.CONFIG_FILE }}
+  DIY_P1_SH: ${{ github.event.inputs.DIY_P1_SH }}
+  DIY_P2_SH: ${{ github.event.inputs.DIY_P2_SH }}
+  UPLOAD_FIRMWARE: ${{ github.event.inputs.UPLOAD_FIRMWARE }}
+  UPLOAD_RELEASE: ${{ github.event.inputs.UPLOAD_RELEASE }}
+  TZ: ${{ github.event.inputs.TZ }}
+  DEBIAN_FRONTEND: noninteractive
 
 jobs:
-  build_firmware:
+  build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 1. 拉取当前仓库全部文件
-        uses: actions/checkout@v4
+      # ======================================
+      # 1. 最大化构建空间（LVM + 清理无用软件）
+      # ======================================
+      - name: 最大化构建空间
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 2048
+          swap-size-mb: 1024
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+          temp-reserve-mb: 100
+          overprovision-lvm: false
 
-      - name: 2. 安装Ubuntu全套编译依赖
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
-          sudo apt autoremove -y
-          sudo apt clean
+      # ======================================
+      # 2. 深度清理磁盘空间
+      # ======================================
+      - name: 深度清理磁盘空间
+        uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
+        with:
+          operate_sudo: true
+          general_include: '.+'
+          general_exclude: |
+            ^GCC$
+            ^G\+\+$
+            Clang
+            LLVM
+            Python
+            Git
+          docker_prune: true
+          docker_clean: true
+          apt_prune: true
+          apt_clean: true
 
-      - name: 3. 克隆 libwrt 源码（直连GitHub，移除ghproxy避免DNS失败）
+      # ======================================
+      # 3. 关键步骤前磁盘空间检查
+      # ======================================
+      - name: 关键步骤前磁盘空间检查
         run: |
-          git clone --depth 1 --single-branch https://github.com/LiBwrt/openwrt-6.x.git openwrt
+          echo "=============================================================================="
+          df -hT
+          echo "可用空间检查："
+          AVAILABLE=$(df / --output=avail | tail -1)
+          if [ "$AVAILABLE" -lt 10485760 ]; then
+            echo "⚠️ 警告：磁盘可用空间不足10GB，可能影响编译"
+            echo "当前可用空间：$((AVAILABLE/1024/1024))GB"
+          else
+            echo "✅ 磁盘空间充足：$((AVAILABLE/1024/1024))GB"
+          fi
+          echo "=============================================================================="
+
+      # ======================================
+      # 4. 检出代码
+      # ======================================
+      - name: 检出代码
+        uses: actions/checkout@main
+
+      # ======================================
+      # 5. 安装编译依赖
+      # ======================================
+      - name: 安装编译依赖
+        run: |
+          sudo -E apt-get -qq update
+          echo "安装核心编译工具..."
+          sudo -E apt-get -qq install build-essential gcc g++ make cmake git curl wget
+          echo "安装 OpenWrt 编译依赖..."
+          sudo -E apt-get -qq install \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            bzip2 ccache cpio device-tree-compiler fastjar flex gawk gettext \
+            gcc-multilib g++-multilib gperf haveged help2man intltool \
+            libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev \
+            libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full \
+            patch pkgconf python2.7 python3 python3-pyelftools libpython3-dev \
+            qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim xmlto xxd zlib1g-dev python3-setuptools
+          echo "清理不必要的包..."
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc \
+            /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
+          sudo timedatectl set-timezone "$TZ"
+          sudo chown "$USER:$GROUPS" "$GITHUB_WORKSPACE"
+          echo "编译环境初始化完成"
+
+      # ======================================
+      # 6. 克隆源码
+      # ======================================
+      - name: 克隆源码
+        run: |
+          git clone --depth 1 --single-branch "$REPO_URL" -b "$REPO_BRANCH" openwrt
+          ln -sf "$GITHUB_WORKSPACE" openwrt/
+
+      # ======================================
+      # 7. 加载自定义软件源
+      # ======================================
+      - name: 加载自定义 feeds 源
+        run: |
+          [ -f "$FEEDS_CONF" ] && cp -v "$FEEDS_CONF" openwrt/feeds.conf.default
+          echo "feeds 源配置完成"
+
+      # ======================================
+      # 8. 执行前置脚本
+      # ======================================
+      - name: 执行前置脚本 diy-part1.sh
+        run: |
+          [ -f "$DIY_P1_SH" ] && chmod +x "$DIY_P1_SH" && cd openwrt && bash "$GITHUB_WORKSPACE/$DIY_P1_SH"
+          echo "diy-part1.sh 执行完成"
+
+      # ======================================
+      # 9. 清理 Rust 编译冲突环境
+      # ======================================
+      - name: 清理 Rust 编译冲突环境与缓存
+        run: |
+          # 清理可能导致 Rust 编译冲突的缓存
+          rm -rf "$HOME/.cargo" 2>/dev/null || true
+          # 清理 Go 缓存（常用于编译 xray-core/mihomo 等）
+          rm -rf "$HOME/go" 2>/dev/null || true
+          echo "Rust/Go 编译环境清理完成"
+
+      # ======================================
+      # 10. 替换第三方完整版 Dockerman
+      # ======================================
+      - name: 替换为第三方完整版 Dockerman
+        run: |
           cd openwrt
-          git pull
-
-      - name: 4. 覆盖自定义 feeds.conf.default（内置第三方插件源）
-        run: cp -v ./libwrt/feeds.conf.default ./openwrt/feeds.conf.default
-
-      - name: 5. 执行前置自定义脚本 diy-part1.sh
-        run: |
-          chmod +x ../libwrt/diy-part1.sh
-          ../libwrt/diy-part1.sh
-        working-directory: ./openwrt
-
-      # 【关键修复】替换官方Dockerman + 修正目录结构 + APK版本号适配
-      - name: 替换为第三方完整版 Dockerman (修复目录结构+APK适配)
-        run: |
-          cd openwrt
-          # 1. 彻底清理所有同名包，杜绝双版本冲突
-          rm -rf feeds/luci/applications/luci-app-dockerman
-          rm -rf feeds/luci/collections/luci-lib-docker
-          rm -rf feeds/packages/utils/luci-lib-docker
-          rm -rf package/luci-app-dockerman package/luci-lib-docker
-
+          # 1. 彻底清理同名包
+          rm -rf feeds/luci/applications/luci-app-dockerman \
+            feeds/luci/collections/luci-lib-docker \
+            feeds/packages/utils/luci-lib-docker \
+            package/luci-app-dockerman package/luci-lib-docker
           # 2. 克隆到临时目录
           git clone --depth=1 https://github.com/lisaac/luci-lib-docker.git tmp-lib-docker
           git clone --depth=1 https://github.com/lisaac/luci-app-dockerman.git tmp-app-dockerman
-
-          # 3. 提取实际包目录到 package 根层级（Makefile 移到顶层，编译系统才能识别）
+          # 3. 提取到 package 根层级
           mv tmp-lib-docker/collections/luci-lib-docker package/luci-lib-docker
           mv tmp-app-dockerman/applications/luci-app-dockerman package/luci-app-dockerman
-
           # 4. 清理临时目录
           rm -rf tmp-lib-docker tmp-app-dockerman
-
-          # 5. 移除版本号v前缀，适配APK包格式强制校验
+          # 5. 移除版本号 v 前缀，适配 APK 包格式
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
+          echo "第三方 Dockerman 替换完成"
 
-          echo "第三方 Dockerman 替换完成，目录结构与APK格式已适配"
+      # ======================================
+      # 11. 更新软件源
+      # ======================================
+      - name: 更新软件源
+        run: cd openwrt && ./scripts/feeds update -a
+        timeout-minutes: 30
 
-      - name: 6. 更新并安装全部软件源 feeds
+      # ======================================
+      # 12. 安装软件源
+      # ======================================
+      - name: 安装软件源
+        run: cd openwrt && ./scripts/feeds install -a
+        timeout-minutes: 10
+
+      # ======================================
+      # 13. 加载自定义配置
+      # ======================================
+      - name: 加载自定义配置
         run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-        working-directory: ./openwrt
+          [ -f "$CONFIG_FILE" ] && cp -v "$CONFIG_FILE" openwrt/.config
+          echo "自定义配置加载完成"
 
-      - name: 7. 导入自定义编译配置 info.config
-        run: cp -v ./libwrt/info.config ./openwrt/.config
-
-      - name: 8. 执行后置自定义脚本 diy-part2.sh
+      # ======================================
+      # 14. 执行后置脚本
+      # ======================================
+      - name: 执行后置脚本 diy-part2.sh
         run: |
-          chmod +x ../libwrt/diy-part2.sh
-          ../libwrt/diy-part2.sh
-        working-directory: ./openwrt
+          [ -f "$DIY_P2_SH" ] && chmod +x "$DIY_P2_SH" && cd openwrt && bash "$GITHUB_WORKSPACE/$DIY_P2_SH"
+          echo "diy-part2.sh 执行完成"
 
-      - name: 9. 预编译生成完整配置
-        run: make defconfig
-        working-directory: ./openwrt
+      # ======================================
+      # 15. 预编译生成配置
+      # ======================================
+      - name: 预编译生成配置
+        run: cd openwrt && make defconfig
 
-      - name: 10. 下载编译依赖源码包
-        run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
-        working-directory: ./openwrt
+      # ======================================
+      # 16. 下载软件包
+      # ======================================
+      - name: 下载软件包
+        run: cd openwrt && make download -j$(nproc)
+        timeout-minutes: 30
 
-      - name: 11. 开始编译固件
-        id: compile_task
-        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
-        working-directory: ./openwrt
+      # ======================================
+      # 17. 开始编译固件
+      # ======================================
+      - name: 编译固件
+        id: compile
+        run: |
+          cd openwrt
+          echo "=== 编译前资源状态 ==="
+          df -h / && free -h
+          echo "=== 开始并行编译 ==="
+          set -o pipefail
+          make -j$(nproc) 2>&1 | tee compile_log.txt || {
+            exit_code=$?
+            echo "=== 并行编译失败（退出码 $exit_code），降级单线程 V=s 重跑抓取详细错误 ==="
+            make -j1 V=s 2>&1 | tee -a compile_log.txt
+            exit $exit_code
+          }
+        timeout-minutes: 360
 
-      - name: 12. 打包编译日志（成功/失败均保留）
-        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
-        run: tar -zcvf compile_log.tar.gz ./openwrt/compile_log.txt
-
-      - name: 13. 上传编译日志产物
-        if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
-        uses: actions/upload-artifact@v4
+      # ======================================
+      # 18. 上传编译日志
+      # ======================================
+      - name: 上传编译日志
+        if: ${{ success() || failure() }}
+        uses: actions/upload-artifact@main
         with:
-          name: 编译完整日志
-          path: compile_log.tar.gz
+          name: compile_log
+          path: openwrt/compile_log.txt
           retention-days: 7
 
-      - name: 固件目录校验（查看是否生成bin）
-        if: success()
-        run: ls -l openwrt/bin/targets/qualcommax/ipq60xx/
+      # ======================================
+      # 19. 检查空间使用
+      # ======================================
+      - name: 检查空间使用
+        if: ${{ success() || failure() }}
+        run: |
+          echo "===== 编译后磁盘状态 ====="
+          df -hT
+          echo "===== 编译后内存状态 ====="
+          free -h
 
-      - name: 14. 上传全新刷机factory固件
+      # ======================================
+      # 20. 整理固件目录
+      # ======================================
+      - name: 整理固件目录
+        id: organize
         if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: LiBwrt_JDC_AX6600_全新刷机_factory
-          path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
-          retention-days: 15
+        run: |
+          cd openwrt/bin/targets/*/*
+          rm -rf packages
+          echo "FIRMWARE_DIR=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "=== 固件目录内容 ==="
+          ls -lh
 
-      - name: 15. 上传后台升级sysupgrade固件
-        if: success()
-        uses: actions/upload-artifact@v4
+      # ======================================
+      # 21. 上传固件到 Actions Artifact
+      # ======================================
+      - name: 上传固件到 Actions Artifact
+        if: steps.organize.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true'
+        uses: actions/upload-artifact@main
         with:
-          name: LiBwrt_JDC_AX6600_在线升级_sysupgrade
-          path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
-          retention-days: 15
+          name: libwrt_firmware
+          path: openwrt/bin/targets/*/*
+          if-no-files-found: warn
+          compression-level: 6
+
+      # ======================================
+      # 22. 上传固件到 Releases
+      # ======================================
+      - name: 上传固件到 Releases
+        uses: softprops/action-gh-release@v1
+        if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true'
+        with:
+          tag: ${{ env.REPO_BRANCH }}_${{ github.run_id }}
+          files: openwrt/bin/targets/*/*
+          body: |
+            ### 自动编译产物
+            - 源码: ${{ env.REPO_URL }} (${{ env.REPO_BRANCH }})
+            - 编译时间: ${{ steps.compile.outputs.start_time }}
+            - 运行编号: ${{ github.run_id }}
+          prerelease: false
+
+      # ======================================
+      # 23. 删除旧 Workflow 记录
+      # ======================================
+      - name: 删除旧的 Workflow 记录
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 30
+          keep_minimum_runs: 10
+
+      # ======================================
+      # 24. 删除旧版本 Releases
+      # ======================================
+      - name: 删除旧版本 Releases
+        uses: dev-drprasad/delete-older-releases@v0.1.0
+        with:
+          keep_latest: 5
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
