@@ -144,5 +144,63 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
+# ======================================
+# 9. Docker 防火墙 hotplug 脚本
+# ======================================
+echo "--- 部署 docker 防火墙 hotplug 脚本 ---"
+mkdir -p files/etc/hotplug.d/net
+cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
+#!/bin/sh
+
+do_fw_setup() {
+    # 创建/更新 docker zone，使用 device 匹配（fw4 br-+ 通配）
+    if ! uci show firewall.docker >/dev/null 2>&1; then
+        NEW=$(uci add firewall zone)
+        uci rename "$NEW"="docker"
+    fi
+
+    uci set firewall.docker.name='docker'
+    uci set firewall.docker.input='ACCEPT'
+    uci set firewall.docker.output='ACCEPT'
+    uci set firewall.docker.forward='ACCEPT'
+    uci set firewall.docker.masq='1'
+
+    uci -q del firewall.docker.network || true
+    uci set firewall.docker.device='docker0'
+    uci add_list firewall.docker.device='br-+'
+
+    # 转发规则 docker→wan
+    if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
+        uci add firewall forwarding
+        uci rename firewall.@forwarding[-1]="fwd_docker_wan"
+        uci set firewall.fwd_docker_wan.src="docker"
+        uci set firewall.fwd_docker_wan.dest="wan"
+    fi
+
+    # 转发规则 lan→docker
+    if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
+        uci add firewall forwarding
+        uci rename firewall.@forwarding[-1]="fwd_lan_docker"
+        uci set firewall.fwd_lan_docker.src="lan"
+        uci set firewall.fwd_lan_docker.dest="docker"
+    fi
+
+    uci commit firewall
+    /etc/init.d/firewall reload >/dev/null 2>&1
+}
+
+# 网卡热插拔事件触发（仅 add 事件，避免 remove 时误 reload）
+case "$ACTION" in
+add)
+    [ "$INTERFACE" = "docker0" ] && do_fw_setup
+;;
+esac
+
+# 支持外部调用：/etc/hotplug.d/net/90-docker-br-attach run
+if [ "x$1" = "xrun" ]; then
+    do_fw_setup
+fi
+DOCKER_FW_EOF
+chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 
 echo "✅ [DIY-P2] 所有配置完成"
