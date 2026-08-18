@@ -1,17 +1,19 @@
 #!/bin/bash
-# diy-part2.sh - 在 feeds install 之后执行
+# diy-part2.sh - 在 feeds install 之后执行 (libwrt 源码适配版)
 echo "=== [DIY-P2] 开始配置第三方包和系统设置 ==="
 
 # ======================================
 # 1. 克隆第三方包（不在 feeds 中的包）
 # ======================================
 echo "--- 克隆 Argon 主题 ---"
+rm -rf package/luci-theme-argon
 git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon || {
     echo "❌ Argon 主题拉取失败"
     exit 1
 }
 
 echo "--- 克隆 Argon 配置插件 ---"
+rm -rf package/luci-app-argon-config
 git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config || {
     echo "❌ Argon 配置插件拉取失败"
     exit 1
@@ -19,12 +21,13 @@ git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git packa
 echo "✅ Argon 主题克隆完成"
 
 echo "--- 克隆 Athena LED 控制插件 ---"
+rm -rf package/luci-app-athena-led
 git clone --depth=1 https://github.com/NONGFAH/luci-app-athena-led package/luci-app-athena-led || {
     echo "❌ Athena LED 插件拉取失败"
     exit 1
 }
-chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led
-chmod +x package/luci-app-athena-led/root/usr/sbin/athena-led
+chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led 2>/dev/null || true
+chmod +x package/luci-app-athena-led/root/usr/sbin/athena-led 2>/dev/null || true
 echo "✅ Athena LED 插件克隆完成"
 
 # ======================================
@@ -32,24 +35,14 @@ echo "✅ Athena LED 插件克隆完成"
 # ======================================
 echo "--- 修改基础系统设置 ---"
 
-# 修改主机名
+# 修改主机名（libwrt 此文件存在）
 sed -i "s/hostname='.*'/hostname='LibWrt'/g" package/base-files/files/bin/config_generate
 
-# 修改版本描述
-sed -i "s/DISTRIB_DESCRIPTION='*.*'/DISTRIB_DESCRIPTION='OpenWrt-$(date +%Y%m%d)'/g" package/lean/default-settings/files/zzz-default-settings   
-sed -i "s/DISTRIB_REVISION='*.*'/DISTRIB_REVISION=' By J.Y'/g" package/lean/default-settings/files/zzz-default-settings
-
-# 修改默认网关 IP
+# 修改默认网关 IP（libwrt 默认 192.168.1.1 → 192.168.100.1）
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 
-# 清除默认密码
-sed -i '/V4UetPzk$CYXluq4wUazHjmCDBCqXF/d' package/lean/default-settings/files/zzz-default-settings
-
-# 添加 iStore 频道信息（优化：防止上游更新导致行号错位）
-if ! grep -q "istore.channel" package/lean/default-settings/files/zzz-default-settings; then
-    sed -i "/^uci commit istore/i uci set istore.istore.channel='OpenWrt'" \
-        package/lean/default-settings/files/zzz-default-settings
-fi
+# 注：libwrt 源码无 package/lean 目录，zzz-default-settings 相关操作已移除
+# libwrt 默认密码即为 none（空密码），无需额外清除
 
 echo "✅ 基础系统设置修改完成"
 
@@ -58,7 +51,6 @@ echo "✅ 基础系统设置修改完成"
 # ======================================
 echo "--- 清理冲突包 ---"
 
-# 只删除与新源冲突的 iStore 相关包
 rm -rf feeds/luci/applications/luci-app-istorex 2>/dev/null || true
 rm -rf feeds/luci/applications/luci-app-quickstart 2>/dev/null || true
 rm -rf feeds/luci/applications/luci-app-store 2>/dev/null || true
@@ -68,19 +60,14 @@ rm -rf feeds/luci/applications/quickstart 2>/dev/null || true
 echo "✅ 冲突包清理完成（保留源码 OpenClash）"
 
 # ======================================
-# 4. 更新并安装特定 feeds（确保安装）
+# 4. 更新并安装特定 feeds
 # ======================================
 echo "--- 更新 feeds ---"
 ./scripts/feeds update helloworld istore nas nas_luci
 
 echo "--- 安装 feeds ---"
-# 安装 helloworld（SSR）
 ./scripts/feeds install -a -p helloworld
-
-# 安装 iStore
 ./scripts/feeds install -d y -p istore luci-app-store
-
-# 安装 NAS 插件
 ./scripts/feeds install -a -p nas
 ./scripts/feeds install -a -p nas_luci
 echo "✅ feeds 安装完成"
@@ -93,7 +80,7 @@ mkdir -p package/base-files/files/etc/uci-defaults
 cat > package/base-files/files/etc/uci-defaults/99-custom-wireless << 'WIFIEOF'
 #!/bin/sh
 
-# JDC_AX6600 无线配置 - 已验证正确的接口名称
+# JDC_AX6600 无线配置
 # radio0: 5G (内置 SoC WiFi)
 uci set wireless.radio0.channel='149'
 uci set wireless.radio0.band='5g'
@@ -125,14 +112,13 @@ WIFIEOF
 chmod +x package/base-files/files/etc/uci-defaults/99-custom-wireless
 echo "✅ 无线配置完成"
 
-
 # ======================================
 # 6. 验证配置
 # ======================================
 echo "=== 验证 feeds 安装状态 ==="
-ls -la package/ | grep -E "(argon|athena|helloworld)"
+ls -la package/ | grep -E "(argon|athena)" || echo "（无）"
 echo "=== 验证 feeds 源 ==="
-cat feeds.conf.default | grep -E "(helloworld|istore|nas)"
+grep -E "(helloworld|istore|nas)" feeds.conf.default || echo "（无）"
 echo "=== 检查 OpenClash ==="
 if [ -d "feeds/luci/applications/luci-app-openclash" ]; then
     echo "✅ 源码自带 OpenClash 存在"
@@ -140,8 +126,9 @@ else
     echo "⚠️ 源码自带 OpenClash 不存在，将在下次编译时恢复"
 fi
 
-#  修改 Docker 根目录到挂载盘（第一次启动生效，执行后自删除）
-
+# ======================================
+# 7. Docker 根目录配置（首次启动生效）
+# ======================================
 mkdir -p package/base-files/files/etc/uci-defaults
 cat > package/base-files/files/etc/uci-defaults/99-docker-data << 'EOF'
 #!/bin/sh
@@ -157,7 +144,10 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
-# ===== CPU 温度/架构双行脚本（兼容首页温度 + 状态-概况架构显示） =====
+# ======================================
+# 8. CPU 温度/架构双行脚本
+# ======================================
+echo "--- 部署 cpuinfo 脚本 ---"
 mkdir -p package/base-files/files/sbin
 cat > package/base-files/files/sbin/cpuinfo << 'EOF'
 #!/bin/sh
@@ -173,20 +163,21 @@ else
 fi
 EOF
 chmod 755 package/base-files/files/sbin/cpuinfo
+echo "✅ cpuinfo 脚本部署完成"
 
-# ======================================================
-# 集成 docker防火墙hotplug脚本，使用全局files覆盖，不改动package源码
-# ======================================================
-echo "--- 部署docker防火墙hotplug脚本 ---"
+# ======================================
+# 9. Docker 防火墙 hotplug 脚本
+# ======================================
+echo "--- 部署 docker 防火墙 hotplug 脚本 ---"
 mkdir -p files/etc/hotplug.d/net
 cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
 #!/bin/sh
 
 do_fw_setup() {
-    # 创建/更新 docker zone，使用 device 匹配（fw4 br‑+通配）
+    # 创建/更新 docker zone，使用 device 匹配（fw4 br-+ 通配）
     if ! uci show firewall.docker >/dev/null 2>&1; then
-        uci add firewall zone
-        uci rename firewall.@zone[-1]="docker"
+        NEW=$(uci add firewall zone)
+        uci rename "$NEW"="docker"
     fi
 
     uci set firewall.docker.name='docker'
@@ -195,7 +186,7 @@ do_fw_setup() {
     uci set firewall.docker.forward='ACCEPT'
     uci set firewall.docker.masq='1'
 
-    uci del firewall.docker.network
+    uci -q del firewall.docker.network || true
     uci set firewall.docker.device='docker0'
     uci add_list firewall.docker.device='br-+'
 
@@ -219,9 +210,9 @@ do_fw_setup() {
     /etc/init.d/firewall reload >/dev/null 2>&1
 }
 
-# 网卡热插拔事件触发
+# 网卡热插拔事件触发（仅 add 事件，避免 remove 时误 reload）
 case "$ACTION" in
-add|remove)
+add)
     [ "$INTERFACE" = "docker0" ] && do_fw_setup
 ;;
 esac
