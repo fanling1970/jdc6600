@@ -187,45 +187,6 @@ fi
 DOCKER_FW_EOF
 chmod 755 package/base-files/files/etc/hotplug.d/net/90-docker-br-attach
 
-# dockerd：直接输出完整带post_start的脚本到base‑files，覆盖feeds原版
-echo "--- 生成带post_start钩子的dockerd脚本 ---"
-mkdir -p package/base-files/files/etc/init.d
-cat > package/base-files/files/etc/init.d/dockerd << 'DOCKERD_INIT_EOF'
-#!/bin/sh
-
-USE_PROCD=1
-PROG=/usr/bin/dockerd
-
-start_service() {
-	local data_root
-	config_load dockerd
-	config_get data_root globals data_root "/opt/docker"
-
-	procd_open_instance
-	procd_set_param command "$PROG"
-	procd_append_param command --data-root "$data_root"
-
-	procd_set_param respawn
-	procd_set_param stdout 1
-	procd_set_param stderr 1
-	procd_close_instance
-}
-
-post_start() {
-	sleep 1
-	/etc/hotplug.d/net/90-docker-br-attach run
-}
-
-service_triggers()
-{
-	procd_add_reload_trigger "dockerd"
-}
-DOCKERD_INIT_EOF
-chmod 755 package/base-files/files/etc/init.d/dockerd
-
-# 可选：延后dockerd启动顺序 START=99
-sed -i '/^START=/c\START=99' package/base-files/files/etc/init.d/dockerd
-
 # ======================================================
 # 修复IPQ60xx首页CPU温度 autocore.uc
 # ======================================================
