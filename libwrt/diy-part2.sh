@@ -145,6 +145,35 @@ EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 # ======================================
+# 8. CPU 温度/架构双行脚本（改进版）
+# ======================================
+echo "--- 部署 cpuinfo 脚本 ---"
+mkdir -p package/base-files/files/sbin
+cat > package/base-files/files/sbin/cpuinfo << 'EOF'
+#!/bin/sh
+# 架构行（兼容 ARM 的 Processor 字段）
+grep -m1 "Processor" /proc/cpuinfo 2>/dev/null | sed 's/^Processor[[:space:]]*:[[:space:]]*//'
+# 温度行（纯 ASCII，避免 UTF-8 字符在打包/解析环节出问题）
+TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"
+raw_temp=""
+[ -r "$TEMP_PATH" ] && raw_temp=$(cat "$TEMP_PATH" 2>/dev/null)
+case "$raw_temp" in
+    ''|*[!0-9]*)
+        echo "CPU 0.0C"
+        ;;
+    *)
+        temp_int=$(( raw_temp / 1000 ))
+        temp_dec=$(( (raw_temp / 100) % 10 ))
+        echo "CPU ${temp_int}.${temp_dec}C"
+        ;;
+esac
+exit 0
+EOF
+chmod 755 package/base-files/files/sbin/cpuinfo
+echo "✅ cpuinfo 脚本部署完成"
+
+
+# ======================================
 # 9. Docker 防火墙 hotplug 脚本
 # ======================================
 echo "--- 部署 docker 防火墙 hotplug 脚本 ---"
