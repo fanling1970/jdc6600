@@ -187,17 +187,21 @@ fi
 DOCKER_FW_EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 
-# 注意：❗❗不能再覆盖 /etc/init.d/dockerd
-# 原因：dockerd官方ipk包自带此文件，全局files覆盖也会报overwrite冲突
-# post_start钩子不能直接替换init脚本，改用 procd 附加钩子文件方式！
-
 echo "--- 生成dockerd post‑start钩子，不替换原版init脚本 ---"
 mkdir -p files/etc/procd/hook.d
 cat > files/etc/procd/hook.d/99-docker-fw-hook << 'DOCKER_HOOK_EOF'
 #!/bin/sh
 [ "$1" = "post_start" ] && [ "$2" = "dockerd" ] && {
-    sleep 1
-    /etc/hotplug.d/net/90-docker-br-attach run
+    # 循环等待docker0网桥出现，最多等待8秒
+    wait_cnt=0
+    while [ ! -d /sys/class/net/docker0 ] && [ $wait_cnt -lt 8 ]; do
+        sleep 1
+        wait_cnt=$((wait_cnt+1))
+    done
+    # docker0出现之后才执行防火墙配置
+    if [ -d /sys/class/net/docker0 ];then
+        /etc/hotplug.d/net/90-docker-br-attach run
+    fi
 }
 DOCKER_HOOK_EOF
 chmod 755 files/etc/procd/hook.d/99-docker-fw-hook
