@@ -207,6 +207,7 @@ chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 # quickstart首页CPU圆环温度修复 IPQ60xx(JDCloud AX6600)
 # 固件未安装autocore，依赖 /sbin/cpuinfo 脚本输出
 # =====================================================================
+echo "--- 部署quickstart CPU温度脚本 /sbin/cpuinfo ---"
 mkdir -p openwrt/files/sbin
 cat > openwrt/files/sbin/cpuinfo <<'CPUINFO_EOF'
 #!/bin/sh
@@ -222,5 +223,6 @@ else
 fi
 CPUINFO_EOF
 chmod 755 openwrt/files/sbin/cpuinfo
+echo "✅ /sbin/cpuinfo 脚本写入并赋予755权限"
 
 echo "✅ [DIY-P2] 所有配置完成"
