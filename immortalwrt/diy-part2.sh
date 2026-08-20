@@ -206,29 +206,4 @@ cat > files/etc/procd/hook.d/99-docker-fw-hook << 'DOCKER_HOOK_EOF'
 DOCKER_HOOK_EOF
 chmod 755 files/etc/procd/hook.d/99-docker-fw-hook
 
-# =====================================================================
-# quickstart首页CPU圆环温度修复 IPQ60xx(JDCloud AX6600)
-# 使用sed修改原版autocore.uc，只替换get_cpu_temp函数，保留rpcd模块注册
-# =====================================================================
-echo "--- sed修补autocore.uc get_cpu_temp函数 IPQ60xx温度 ---"
-AUTOCORE_FILE="openwrt/files/usr/share/rpcd/ucode/autocore.uc"
-mkdir -p openwrt/files/usr/share/rpcd/ucode
-
-# 先把源码内原版autocore.uc复制到files覆盖目录，再做sed修改
-cp -f base-files/files/usr/share/rpcd/ucode/autocore.uc ${AUTOCORE_FILE}
-
-# sed替换整个get_cpu_temp函数块
-sed -i '/function get_cpu_temp()/,/return null;/c\function get_cpu_temp() {\
-	/* IPQ60xx优先thermal_zone0 */\
-	let val = read_file("/sys/class/thermal/thermal_zone0/temp");\
-	if(val){\
-		let t = Number(val);\
-		if(t>0) return Math.round(t/1000);\
-	}\
-	return null;\
-}' ${AUTOCORE_FILE}
-
-chmod 644 ${AUTOCORE_FILE}
-echo "✅ autocore.uc函数修补完成"
-
 echo "=== diy-part2.sh 执行完成==="
