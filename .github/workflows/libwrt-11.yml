@@ -100,11 +100,11 @@ jobs:
           ../libwrt/diy-part2.sh
         working-directory: ./openwrt
 
-      - name: 9.make defconfig
+      - name: 9.预编译生成完整配置
         run: make defconfig
         working-directory: ./openwrt
 
-      - name: 10.make download
+      - name: 10.下载编译依赖源码包
         run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
         working-directory: ./openwrt
 
