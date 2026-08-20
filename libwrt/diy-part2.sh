@@ -203,4 +203,24 @@ fi
 DOCKER_FW_EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 
+# =====================================================================
+# quickstart首页CPU圆环温度修复 IPQ60xx(JDCloud AX6600)
+# 固件未安装autocore，依赖 /sbin/cpuinfo 脚本输出
+# =====================================================================
+mkdir -p openwrt/files/sbin
+cat > openwrt/files/sbin/cpuinfo <<'CPUINFO_EOF'
+#!/bin/sh
+TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"
+if [ -r "$TEMP_PATH" ]; then
+    raw_temp=$(cat "$TEMP_PATH")
+    temp_int=$(( raw_temp / 1000 ))
+    temp_dec=$(( (raw_temp / 100) % 10 ))
+    cpu_temp="${temp_int}.${temp_dec}"
+    echo "CPU ${cpu_temp}°C"
+else
+    echo "CPU 0.0°C"
+fi
+CPUINFO_EOF
+chmod 755 openwrt/files/sbin/cpuinfo
+
 echo "✅ [DIY-P2] 所有配置完成"
