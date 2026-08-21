@@ -213,25 +213,4 @@ cat > files/etc/config/dockerd <<'DOCKERD_CFG'
 config globals 'globals'
         option procd_post_start '/etc/init.d/docker_poststart'
 DOCKERD_CFG
-
-
-echo "--- 生成dockerd post‑start钩子，不替换原版init脚本 ---"
-mkdir -p files/etc/procd/hook.d
-cat > files/etc/procd/hook.d/99-docker-fw-hook << 'DOCKER_HOOK_EOF'
-#!/bin/sh
-[ "$1" = "post_start" ] && [ "$2" = "dockerd" ] && {
-    # 循环等待docker0网桥出现，最多等待8秒
-    wait_cnt=0
-    while [ ! -d /sys/class/net/docker0 ] && [ $wait_cnt -lt 8 ]; do
-        sleep 1
-        wait_cnt=$((wait_cnt+1))
-    done
-    # docker0出现之后才执行防火墙配置
-    if [ -d /sys/class/net/docker0 ];then
-        /etc/hotplug.d/net/90-docker-br-attach run
-    fi
-}
-DOCKER_HOOK_EOF
-chmod 755 files/etc/procd/hook.d/99-docker-fw-hook
-
 echo "=== diy-part2.sh 执行完成==="
