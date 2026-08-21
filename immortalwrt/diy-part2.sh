@@ -129,8 +129,7 @@ EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 # ======================================================
-# 集成 docker防火墙hotplug脚本，使用全局files覆盖，不改动package源码
-# 放弃 procd/hook.d（ImmortalWrt存在事件丢失bug），改用dockerd原生 procd_post_start
+# docker防火墙 hotplug脚本 保留
 # ======================================================
 echo "--- 部署docker防火墙hotplug脚本 ---"
 mkdir -p files/etc/hotplug.d/net
@@ -138,7 +137,6 @@ cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
 #!/bin/sh
 
 do_fw_setup() {
-    # 创建/更新 docker zone，使用 device 匹配（fw4 br‑+通配）
     if ! uci show firewall.docker >/dev/null 2>&1; then
         uci add firewall zone
         uci rename firewall.@zone[-1]="docker"
@@ -154,7 +152,6 @@ do_fw_setup() {
     uci set firewall.docker.device='docker0'
     uci add_list firewall.docker.device='br-+'
 
-    # 转发规则 docker→wan
     if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
         uci add firewall forwarding
         uci rename firewall.@forwarding[-1]="fwd_docker_wan"
@@ -162,7 +159,6 @@ do_fw_setup() {
         uci set firewall.fwd_docker_wan.dest="wan"
     fi
 
-    # 转发规则 lan→docker
     if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
         uci add firewall forwarding
         uci rename firewall.@forwarding[-1]="fwd_lan_docker"
@@ -171,65 +167,45 @@ do_fw_setup() {
     fi
 
     uci commit firewall
-    # fw4增量重载，禁止完整firewall服务重启，避免首次开机网页卡死
     fw4 reload 2>/dev/null || true
 }
 
-# 网卡热插拔事件触发
 case "$ACTION" in
 add|remove)
     [ "$INTERFACE" = "docker" ] && do_fw_setup
 ;;
 esac
 
-# 支持外部调用：/etc/hotplug.d/net/90-docker-br-attach run
 if [ "x$1" = "xrun" ]; then
     do_fw_setup
 fi
 DOCKER_FW_EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 
-echo "--- 生成dockerd post_start回调脚本 ---"
-mkdir -p files/etc/init.d
-cat > files/etc/init.d/docker_poststart << 'DOCKER_POST_EOF'
+echo "--- 生成post_start执行脚本 ---"
+mkdir -p files/etc
+cat > files/etc/docker_poststart.sh << 'POSTSTART_EOF'
 #!/bin/sh
-# dockerd procd_post_start 回调脚本
-
+logger -t docker_poststart "dockerd post_start 开始等待docker0网桥"
 wait_cnt=0
 while [ ! -d /sys/class/net/docker0 ] && [ $wait_cnt -lt 8 ]; do
     sleep 1
     wait_cnt=$((wait_cnt+1))
 done
-
-if [ -d /sys/class/net/docker0 ]; then
+if [ -d /sys/class/net/docker0 ];then
+    logger -t docker_poststart "检测docker0就绪，生成docker防火墙规则"
     /etc/hotplug.d/net/90-docker-br-attach run
-fi
-DOCKER_POST_EOF
-chmod 755 files/etc/init.d/docker_poststart
-
-# 直接预置dockerd配置到固件rootfs，刷机第一次开机就携带procd_post_start
-mkdir -p files/etc/config
-cat > files/etc/config/dockerd <<'DOCKERD_CFG'
-config globals 'globals'
-        option procd_post_start '/etc/init.d/docker_poststart'
-DOCKERD_CFG
-
-# ===== CPU 温度/架构双行脚本（兼容首页温度 + 状态-概况架构显示） =====
-mkdir -p package/base-files/files/sbin
-cat > package/base-files/files/sbin/cpuinfo << 'EOF'
-#!/bin/sh
-grep -m1 "Processor" /proc/cpuinfo | sed 's/^Processor[[:space:]]*:[[:space:]]*//'
-TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"
-if [ -r "$TEMP_PATH" ]; then
-    raw_temp=$(cat "$TEMP_PATH")
-    temp_int=$(( raw_temp / 1000 ))
-    temp_dec=$(( (raw_temp / 100) % 10 ))
-    echo "CPU ${temp_int}.${temp_dec}°C"
 else
-    echo "CPU 0.0°C"
+    logger -t docker_poststart "等待超时，未检测到docker0"
 fi
-EOF
-chmod 755 package/base-files/files/sbin/cpuinfo
+POSTSTART_EOF
+chmod 755 files/etc/docker_poststart.sh
 
+echo "--- 修补dockerd的init脚本，注入procd_post_start，不会被uci配置覆盖 ---"
+# 从源码把原始dockerd init脚本复制出来，追加procd_post_start参数
+cp -f package/feeds/packages/dockerd/files/dockerd.init files/etc/init.d/dockerd
+# 在procd_open_instance后插入 procd_set_param procd_post_start
+sed -i '/procd_open_instance/a\procd_set_param procd_post_start /etc/docker_poststart.sh' files/etc/init.d/dockerd
+chmod 755 files/etc/init.d/dockerd
 
 echo "=== diy-part2.sh 执行完成==="
