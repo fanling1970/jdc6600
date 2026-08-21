@@ -170,13 +170,15 @@ do_fw_setup() {
     fi
 
     uci commit firewall
-    /etc/init.d/firewall reload >/dev/null 2>&1
+    # fw4 不要调用 /etc/init.d/firewall reload，会破坏首次开机lan访问网页
+    # 改用fw4 局部刷新，失败直接忽略
+    fw4 reload 2>/dev/null || true
 }
 
 # 网卡热插拔事件触发
 case "$ACTION" in
 add|remove)
-    [ "$INTERFACE" = "docker0" ] && do_fw_setup
+    [ "$INTERFACE" = "docker" ] && do_fw_setup
 ;;
 esac
 
