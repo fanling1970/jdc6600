@@ -119,7 +119,7 @@ jobs:
       # <<< 改动3：编译命令加上 FILES=files >>>
       - name: 11. 开始编译固件
         id: compile_task
-        run: make -j${{ github.event.inputs.COMPILE_THREAD }} FILES=files 2>&1 | tee compile_log.txt
+        run: make -j1 V=s FILES=files 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
 
       - name: 12. 打包编译日志
