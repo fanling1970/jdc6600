@@ -213,4 +213,23 @@ cat > files/etc/config/dockerd <<'DOCKERD_CFG'
 config globals 'globals'
         option procd_post_start '/etc/init.d/docker_poststart'
 DOCKERD_CFG
+
+# ===== CPU 温度/架构双行脚本（兼容首页温度 + 状态-概况架构显示） =====
+mkdir -p package/base-files/files/sbin
+cat > package/base-files/files/sbin/cpuinfo << 'EOF'
+#!/bin/sh
+grep -m1 "Processor" /proc/cpuinfo | sed 's/^Processor[[:space:]]*:[[:space:]]*//'
+TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"
+if [ -r "$TEMP_PATH" ]; then
+    raw_temp=$(cat "$TEMP_PATH")
+    temp_int=$(( raw_temp / 1000 ))
+    temp_dec=$(( (raw_temp / 100) % 10 ))
+    echo "CPU ${temp_int}.${temp_dec}°C"
+else
+    echo "CPU 0.0°C"
+fi
+EOF
+chmod 755 package/base-files/files/sbin/cpuinfo
+
+
 echo "=== diy-part2.sh 执行完成==="
