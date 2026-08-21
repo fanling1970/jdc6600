@@ -130,6 +130,7 @@ chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 # ======================================================
 # 集成 docker防火墙hotplug脚本，使用全局files覆盖，不改动package源码
+# 放弃 procd/hook.d（ImmortalWrt存在事件丢失bug），改用dockerd原生 procd_post_start
 # ======================================================
 echo "--- 部署docker防火墙hotplug脚本 ---"
 mkdir -p files/etc/hotplug.d/net
@@ -170,8 +171,7 @@ do_fw_setup() {
     fi
 
     uci commit firewall
-    # fw4 不要调用 /etc/init.d/firewall reload，会破坏首次开机lan访问网页
-    # 改用fw4 局部刷新，失败直接忽略
+    # fw4增量重载，禁止完整firewall服务重启，避免首次开机网页卡死
     fw4 reload 2>/dev/null || true
 }
 
@@ -188,6 +188,32 @@ if [ "x$1" = "xrun" ]; then
 fi
 DOCKER_FW_EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
+
+echo "--- 生成dockerd post_start回调脚本 ---"
+mkdir -p files/etc/init.d
+cat > files/etc/init.d/docker_poststart << 'DOCKER_POST_EOF'
+#!/bin/sh
+# dockerd procd_post_start 回调脚本
+
+wait_cnt=0
+while [ ! -d /sys/class/net/docker0 ] && [ $wait_cnt -lt 8 ]; do
+    sleep 1
+    wait_cnt=$((wait_cnt+1))
+done
+
+if [ -d /sys/class/net/docker0 ]; then
+    /etc/hotplug.d/net/90-docker-br-attach run
+fi
+DOCKER_POST_EOF
+chmod 755 files/etc/init.d/docker_poststart
+
+# 直接预置dockerd配置到固件rootfs，刷机第一次开机就携带procd_post_start
+mkdir -p files/etc/config
+cat > files/etc/config/dockerd <<'DOCKERD_CFG'
+config globals 'globals'
+        option procd_post_start '/etc/init.d/docker_poststart'
+DOCKERD_CFG
+
 
 echo "--- 生成dockerd post‑start钩子，不替换原版init脚本 ---"
 mkdir -p files/etc/procd/hook.d
