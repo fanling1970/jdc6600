@@ -201,11 +201,14 @@ fi
 POSTSTART_EOF
 chmod 755 files/etc/docker_poststart.sh
 
-echo "--- 修补dockerd的init脚本，注入procd_post_start，不会被uci配置覆盖 ---"
-# 从源码把原始dockerd init脚本复制出来，追加procd_post_start参数
-cp -f package/feeds/packages/dockerd/files/dockerd.init files/etc/init.d/dockerd
-# 在procd_open_instance后插入 procd_set_param procd_post_start
-sed -i '/procd_open_instance/a\procd_set_param procd_post_start /etc/docker_poststart.sh' files/etc/init.d/dockerd
-chmod 755 files/etc/init.d/dockerd
+echo "--- 直接修改源码dockerd.init，注入procd_post_start参数 ---"
+DOCKERD_INIT="package/feeds/packages/dockerd/files/dockerd.init"
+if [ -f "${DOCKERD_INIT}" ]; then
+    sed -i '/procd_open_instance/a\procd_set_param procd_post_start \/etc\/docker_poststart.sh' "${DOCKERD_INIT}"
+    echo "✅ dockerd init脚本已注入procd_post_start"
+else
+    echo "⚠️ 警告：未找到${DOCKERD_INIT}，跳过注入"
+fi
+
 
 echo "=== diy-part2.sh 执行完成==="
