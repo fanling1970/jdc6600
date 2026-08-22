@@ -129,7 +129,9 @@ EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 # ======================================================
-# docker防火墙 hotplug脚本 保留
+# Docker防火墙：纯net hotplug实现，彻底放弃procd回调系列bug
+# 完全不依赖procd_post_start / procd/hook.d
+# 内核docker0网卡add事件触发脚本，内置重试等待
 # ======================================================
 echo "--- 部署docker防火墙hotplug脚本 ---"
 mkdir -p files/etc/hotplug.d/net
@@ -137,78 +139,77 @@ cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
 #!/bin/sh
 
 do_fw_setup() {
-    if ! uci show firewall.docker >/dev/null 2>&1; then
-        uci add firewall zone
-        uci rename firewall.@zone[-1]="docker"
-    fi
+    local retry=0
+    # 最多重试3次，每次等待1s，适配docker0刚up但系统未就绪
+    while [ $retry -lt 3 ]; do
+        if uci show firewall.docker >/dev/null 2>&1; then
+            break
+        fi
 
-    uci set firewall.docker.name='docker'
-    uci set firewall.docker.input='ACCEPT'
-    uci set firewall.docker.output='ACCEPT'
-    uci set firewall.docker.forward='ACCEPT'
-    uci set firewall.docker.masq='1'
+        if ! uci show firewall.docker >/dev/null 2>&1; then
+            uci add firewall zone
+            uci rename firewall.@zone[-1]="docker"
+        fi
 
-    uci del firewall.docker.network
-    uci set firewall.docker.device='docker0'
-    uci add_list firewall.docker.device='br-+'
+        uci set firewall.docker.name='docker'
+        uci set firewall.docker.input='ACCEPT'
+        uci set firewall.docker.output='ACCEPT'
+        uci set firewall.docker.forward='ACCEPT'
+        uci set firewall.docker.masq='1'
 
-    if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
-        uci add firewall forwarding
-        uci rename firewall.@forwarding[-1]="fwd_docker_wan"
-        uci set firewall.fwd_docker_wan.src="docker"
-        uci set firewall.fwd_docker_wan.dest="wan"
-    fi
+        uci del firewall.docker.network
+        uci set firewall.docker.device='docker0'
+        uci add_list firewall.docker.device='br-+'
 
-    if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
-        uci add firewall forwarding
-        uci rename firewall.@forwarding[-1]="fwd_lan_docker"
-        uci set firewall.fwd_lan_docker.src="lan"
-        uci set firewall.fwd_lan_docker.dest="docker"
-    fi
+        if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
+            uci add firewall forwarding
+            uci rename firewall.@forwarding[-1]="fwd_docker_wan"
+            uci set firewall.fwd_docker_wan.src="docker"
+            uci set firewall.fwd_docker_wan.dest="wan"
+        fi
 
-    uci commit firewall
-    fw4 reload 2>/dev/null || true
+        if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
+            uci add firewall forwarding
+            uci rename firewall.@forwarding[-1]="fwd_lan_docker"
+            uci set firewall.fwd_lan_docker.src="lan"
+            uci set firewall.fwd_lan_docker.dest="docker"
+        fi
+
+        uci commit firewall
+        fw4 reload 2>/dev/null || true
+
+        if uci show firewall.docker >/dev/null 2>&1; then
+            logger -t docker_fw "docker防火墙配置完成"
+            return 0
+        fi
+        retry=$((retry+1))
+        sleep 1
+    done
+    logger -t docker_fw "docker防火墙配置重试后失败"
 }
 
+# 网卡热插拔事件：内核检测docker0设备新增触发
 case "$ACTION" in
-add|remove)
-    [ "$INTERFACE" = "docker" ] && do_fw_setup
+add)
+    if [ "$INTERFACE" = "docker0" ]; then
+        logger -t docker_fw "hotplug捕获docker0 add事件"
+        # 给dockerd一点时间完成初始化
+        sleep 1
+        do_fw_setup
+    fi
+;;
+remove)
+    # 网桥销毁事件，这里不需要处理
 ;;
 esac
 
+# 保留手动调用入口，兼容调试
 if [ "x$1" = "xrun" ]; then
     do_fw_setup
 fi
 DOCKER_FW_EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 
-echo "--- 生成post_start执行脚本 ---"
-mkdir -p files/etc
-cat > files/etc/docker_poststart.sh << 'POSTSTART_EOF'
-#!/bin/sh
-logger -t docker_poststart "dockerd post_start 开始等待docker0网桥"
-wait_cnt=0
-while [ ! -d /sys/class/net/docker0 ] && [ $wait_cnt -lt 8 ]; do
-    sleep 1
-    wait_cnt=$((wait_cnt+1))
-done
-if [ -d /sys/class/net/docker0 ];then
-    logger -t docker_poststart "检测docker0就绪，生成docker防火墙规则"
-    /etc/hotplug.d/net/90-docker-br-attach run
-else
-    logger -t docker_poststart "等待超时，未检测到docker0"
-fi
-POSTSTART_EOF
-chmod 755 files/etc/docker_poststart.sh
-
-echo "--- 直接修改源码dockerd.init，注入procd_post_start参数 ---"
-DOCKERD_INIT="package/feeds/packages/dockerd/files/dockerd.init"
-if [ -f "${DOCKERD_INIT}" ]; then
-    sed -i '/procd_open_instance/a\procd_set_param procd_post_start \/etc\/docker_poststart.sh' "${DOCKERD_INIT}"
-    echo "✅ dockerd init脚本已注入procd_post_start"
-else
-    echo "⚠️ 警告：未找到${DOCKERD_INIT}，跳过注入"
-fi
 
 # ===== CPU 温度/架构双行脚本（刷机首次启动时自动创建） =====
 mkdir -p package/base-files/files/etc/uci-defaults
