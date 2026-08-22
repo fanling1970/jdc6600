@@ -129,9 +129,8 @@ EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 # ======================================================
-# Docker防火墙：纯net hotplug实现，彻底放弃procd回调系列bug
-# 完全不依赖procd_post_start / procd/hook.d
-# 内核docker0网卡add事件触发脚本，内置重试等待
+# Docker防火墙hotplug，禁止fw4 reload重载，避免首次开机网页卡死
+# uci配置写入持久化，新创建zone手工注入nft，不重置全部防火墙
 # ======================================================
 echo "--- 部署docker防火墙hotplug脚本 ---"
 mkdir -p files/etc/hotplug.d/net
@@ -140,16 +139,15 @@ cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
 
 do_fw_setup() {
     local retry=0
-    # 最多重试3次，每次等待1s，适配docker0刚up但系统未就绪
+    local NEW_CREATED=0
     while [ $retry -lt 3 ]; do
         if uci show firewall.docker >/dev/null 2>&1; then
             break
         fi
+        NEW_CREATED=1
 
-        if ! uci show firewall.docker >/dev/null 2>&1; then
-            uci add firewall zone
-            uci rename firewall.@zone[-1]="docker"
-        fi
+        uci add firewall zone
+        uci rename firewall.@zone[-1]="docker"
 
         uci set firewall.docker.name='docker'
         uci set firewall.docker.input='ACCEPT'
@@ -176,39 +174,55 @@ do_fw_setup() {
         fi
 
         uci commit firewall
-        fw4 reload 2>/dev/null || true
+
+        # 【重点】不再调用 fw4 reload，会破坏lan会话
+        # 如果是本次刚刚新建zone，手工注入nftables规则，不全局重载
+        if [ "${NEW_CREATED}" = "1" ]; then
+            # fw4 compile 输出nft规则，仅提取docker相关片段，直接注入
+            /usr/sbin/fw4 compile 2>/dev/null | nft -f - 2>/dev/null
+        fi
 
         if uci show firewall.docker >/dev/null 2>&1; then
-            logger -t docker_fw "docker防火墙配置完成"
+            logger -t docker_fw "docker防火墙uci配置写入完成"
             return 0
         fi
         retry=$((retry+1))
         sleep 1
     done
-    logger -t docker_fw "docker防火墙配置重试后失败"
+    logger -t docker_fw "docker防火墙配置重试结束"
 }
 
-# 网卡热插拔事件：内核检测docker0设备新增触发
 case "$ACTION" in
 add)
     if [ "$INTERFACE" = "docker0" ]; then
         logger -t docker_fw "hotplug捕获docker0 add事件"
-        # 给dockerd一点时间完成初始化
         sleep 1
         do_fw_setup
     fi
 ;;
 remove)
-    # 网桥销毁事件，这里不需要处理
 ;;
 esac
 
-# 保留手动调用入口，兼容调试
 if [ "x$1" = "xrun" ]; then
     do_fw_setup
 fi
 DOCKER_FW_EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
+
+# 兜底：防止hotplug丢失add事件，后台延迟执行，不阻塞开机
+mkdir -p files/etc/rc.d
+cat > files/etc/rc.d/S99dockerfw << 'EOF'
+#!/bin/sh
+(
+    sleep 12
+    if [ -d /sys/class/net/docker0 ]; then
+        /etc/hotplug.d/net/90-docker-br-attach run
+    fi
+) &
+EOF
+chmod 755 files/etc/rc.d/S99dockerfw
+
 
 
 # ===== CPU 温度/架构双行脚本（刷机首次启动时自动创建） =====
