@@ -77,25 +77,6 @@ jobs:
           ./scripts/feeds install -a
         working-directory: ./openwrt
 
-      # <<< 改动1：CPU双行脚本，working-directory 确保文件在 openwrt/files/ 下 >>>
-      - name: 集成CPU温度/架构双行脚本
-        working-directory: ./openwrt
-        run: |
-          mkdir -p files/sbin
-          echo '#!/bin/sh' > files/sbin/cpuinfo
-          echo 'grep -m1 "Processor" /proc/cpuinfo | sed "s/^Processor[[:space:]]*:[[:space:]]*//"' >> files/sbin/cpuinfo
-          echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> files/sbin/cpuinfo
-          echo 'if [ -r "$TEMP_PATH" ]; then' >> files/sbin/cpuinfo
-          echo '    raw_temp=$(cat "$TEMP_PATH")' >> files/sbin/cpuinfo
-          echo '    temp_int=$(( raw_temp / 1000 ))' >> files/sbin/cpuinfo
-          echo '    temp_dec=$(( (raw_temp / 100) % 10 ))' >> files/sbin/cpuinfo
-          echo '    cpu_temp="${temp_int}.${temp_dec}"' >> files/sbin/cpuinfo
-          echo '    echo "CPU ${cpu_temp}°C"' >> files/sbin/cpuinfo
-          echo 'else' >> files/sbin/cpuinfo
-          echo '    echo "CPU 0.0°C"' >> files/sbin/cpuinfo
-          echo 'fi' >> files/sbin/cpuinfo
-          chmod +x files/sbin/cpuinfo
-
       - name: 7. 导入自定义编译配置 info.config
         run: cp -v ./immortalwrt/info.config ./openwrt/.config
 
@@ -103,23 +84,19 @@ jobs:
         run: |
           chmod +x ../immortalwrt/diy-part2.sh
           ../immortalwrt/diy-part2.sh
-          chmod 755 files/etc/hotplug.d/net/* 2>/dev/null || true
-          chmod 755 files/etc/docker_poststart.sh 2>/dev/null || true
         working-directory: ./openwrt
 
-      # <<< 改动2：defconfig 加上 FILES=files >>>
       - name: 9. 预编译生成完整配置
-        run: make defconfig FILES=files
+        run: make defconfig
         working-directory: ./openwrt
 
       - name: 10. 下载编译依赖源码包
         run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
         working-directory: ./openwrt
 
-      # <<< 改动3：编译命令加上 FILES=files >>>
       - name: 11. 开始编译固件
         id: compile_task
-        run: make -j1 V=s FILES=files 2>&1 | tee compile_log.txt
+        run: make -j${{ github.event.inputs.COMPILE_THREAD }} 2>&1 | tee compile_log.txt
         working-directory: ./openwrt
 
       - name: 12. 打包编译日志
