@@ -237,5 +237,12 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-cpuinfo
 
+# 延后dockerd启动序号到S97，保证firewall完全启动完毕再启动docker
+DOCKERD_INIT="package/feeds/packages/dockerd/files/dockerd.init"
+if [ -f "${DOCKERD_INIT}" ]; then
+    sed -i 's/START=95/START=97/' "${DOCKERD_INIT}"
+    echo "✅ dockerd START 修改为97，延后启动"
+fi
+
 
 echo "=== diy-part2.sh 执行完成==="
