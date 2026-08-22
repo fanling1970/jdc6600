@@ -129,8 +129,8 @@ EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
 # ======================================================
-# Docker防火墙hotplug，禁止fw4 reload重载，避免首次开机网页卡死
-# uci配置写入持久化，新创建zone手工注入nft，不重置全部防火墙
+# Docker防火墙hotplug方案A：仅持久化写入uci，不触碰运行时防火墙
+# 保证首次开机LuCI网页一定可用，规避fw4与dockerd iptables‑nft冲突
 # ======================================================
 echo "--- 部署docker防火墙hotplug脚本 ---"
 mkdir -p files/etc/hotplug.d/net
@@ -139,12 +139,10 @@ cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
 
 do_fw_setup() {
     local retry=0
-    local NEW_CREATED=0
     while [ $retry -lt 3 ]; do
         if uci show firewall.docker >/dev/null 2>&1; then
             break
         fi
-        NEW_CREATED=1
 
         uci add firewall zone
         uci rename firewall.@zone[-1]="docker"
@@ -174,22 +172,15 @@ do_fw_setup() {
         fi
 
         uci commit firewall
-
-        # 【重点】不再调用 fw4 reload，会破坏lan会话
-        # 如果是本次刚刚新建zone，手工注入nftables规则，不全局重载
-        if [ "${NEW_CREATED}" = "1" ]; then
-            # fw4 compile 输出nft规则，仅提取docker相关片段，直接注入
-            /usr/sbin/fw4 compile 2>/dev/null | nft -f - 2>/dev/null
-        fi
+        logger -t docker_fw "docker防火墙uci配置已持久写入磁盘，不刷新运行时防火墙"
 
         if uci show firewall.docker >/dev/null 2>&1; then
-            logger -t docker_fw "docker防火墙uci配置写入完成"
             return 0
         fi
         retry=$((retry+1))
         sleep 1
     done
-    logger -t docker_fw "docker防火墙配置重试结束"
+    logger -t docker_fw "docker防火墙uci写入结束"
 }
 
 case "$ACTION" in
@@ -210,7 +201,7 @@ fi
 DOCKER_FW_EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 
-# 兜底：防止hotplug丢失add事件，后台延迟执行，不阻塞开机
+# 兜底脚本：防止hotplug丢失docker0 add事件，后台仅做uci写入，不操作防火墙运行时
 mkdir -p files/etc/rc.d
 cat > files/etc/rc.d/S99dockerfw << 'EOF'
 #!/bin/sh
@@ -222,7 +213,6 @@ cat > files/etc/rc.d/S99dockerfw << 'EOF'
 ) &
 EOF
 chmod 755 files/etc/rc.d/S99dockerfw
-
 
 
 # ===== CPU 温度/架构双行脚本（刷机首次启动时自动创建） =====
