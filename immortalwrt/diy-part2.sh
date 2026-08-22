@@ -128,91 +128,51 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
-# ======================================================
-# Docker防火墙hotplug方案A：仅持久化写入uci，不触碰运行时防火墙
-# 保证首次开机LuCI网页一定可用，规避fw4与dockerd iptables‑nft冲突
-# ======================================================
-echo "--- 部署docker防火墙hotplug脚本 ---"
-mkdir -p files/etc/hotplug.d/net
-cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
-#!/bin/sh
+mkdir -p files/etc
+cat > files/etc/rc.local <<'RCLOCAL_EOF'
+# Put your custom commands here that should be executed once
+# the system init finished. By default this file does nothing.
 
-do_fw_setup() {
-    local retry=0
-    while [ $retry -lt 3 ]; do
-        if uci show firewall.docker >/dev/null 2>&1; then
-            break
-        fi
-
-        uci add firewall zone
-        uci rename firewall.@zone[-1]="docker"
-
-        uci set firewall.docker.name='docker'
-        uci set firewall.docker.input='ACCEPT'
-        uci set firewall.docker.output='ACCEPT'
-        uci set firewall.docker.forward='ACCEPT'
-        uci set firewall.docker.masq='1'
-
-        uci del firewall.docker.network
-        uci set firewall.docker.device='docker0'
-        uci add_list firewall.docker.device='br-+'
-
-        if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
-            uci add firewall forwarding
-            uci rename firewall.@forwarding[-1]="fwd_docker_wan"
-            uci set firewall.fwd_docker_wan.src="docker"
-            uci set firewall.fwd_docker_wan.dest="wan"
-        fi
-
-        if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
-            uci add firewall forwarding
-            uci rename firewall.@forwarding[-1]="fwd_lan_docker"
-            uci set firewall.fwd_lan_docker.src="lan"
-            uci set firewall.fwd_lan_docker.dest="docker"
-        fi
-
-        uci commit firewall
-        logger -t docker_fw "docker防火墙uci配置已持久写入磁盘，不刷新运行时防火墙"
-
-        if uci show firewall.docker >/dev/null 2>&1; then
-            return 0
-        fi
-        retry=$((retry+1))
-        sleep 1
-    done
-    logger -t docker_fw "docker防火墙uci写入结束"
-}
-
-case "$ACTION" in
-add)
-    if [ "$INTERFACE" = "docker0" ]; then
-        logger -t docker_fw "hotplug捕获docker0 add事件"
-        sleep 1
-        do_fw_setup
-    fi
-;;
-remove)
-;;
-esac
-
-if [ "x$1" = "xrun" ]; then
-    do_fw_setup
-fi
-DOCKER_FW_EOF
-chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
-
-# 兜底脚本：防止hotplug丢失docker0 add事件，后台仅做uci写入，不操作防火墙运行时
-mkdir -p files/etc/rc.d
-cat > files/etc/rc.d/S99dockerfw << 'EOF'
-#!/bin/sh
 (
-    sleep 12
-    if [ -d /sys/class/net/docker0 ]; then
-        /etc/hotplug.d/net/90-docker-br-attach run
-    fi
+sleep 8
+if uci show firewall.docker >/dev/null 2>&1; then
+        /etc/init.d/firewall reload
+fi
 ) &
-EOF
-chmod 755 files/etc/rc.d/S99dockerfw
+
+exit 0
+RCLOCAL_EOF
+chmod 755 files/etc/rc.local
+
+mkdir -p files/etc/uci-defaults
+cat > files/etc/uci-defaults/99-set-docker-fw <<'UCIEOF'
+#!/bin/sh
+uci show firewall.docker >/dev/null 2>&1 || {
+uci add firewall zone
+uci rename firewall.@zone[-1] docker
+uci set firewall.docker.name='docker'
+uci set firewall.docker.input='ACCEPT'
+uci set firewall.docker.output='ACCEPT'
+uci set firewall.docker.forward='ACCEPT'
+uci set firewall.docker.masq='1'
+uci del firewall.docker.network
+uci set firewall.docker.device='docker0'
+uci add_list firewall.docker.device='br-+'
+
+uci add firewall forwarding
+uci rename firewall.@forwarding[-1] fwd_docker_wan
+uci set firewall.fwd_docker_wan.src='docker'
+uci set firewall.fwd_docker_wan.dest='wan'
+
+uci add firewall forwarding
+uci rename firewall.@forwarding[-1] fwd_lan_docker
+uci set firewall.fwd_lan_docker.src='lan'
+uci set firewall.fwd_lan_docker.dest='docker'
+
+uci commit firewall
+}
+UCIEOF
+chmod 755 files/etc/uci-defaults/99-set-docker-fw
 
 
 # ===== CPU 温度/架构双行脚本（刷机首次启动时自动创建） =====
