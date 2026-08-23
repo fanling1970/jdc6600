@@ -144,85 +144,112 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
-# ======================================
-# 9. Docker 防火墙 hotplug 脚本
-# ======================================
-echo "--- 部署 docker 防火墙 hotplug 脚本 ---"
+# ======================================================
+# Docker防火墙hotplug方案A：仅持久化写入uci，不触碰运行时防火墙
+# 保证首次开机LuCI网页一定可用，规避fw4与dockerd iptables‑nft冲突
+# ======================================================
+echo "--- 部署docker防火墙hotplug脚本 ---"
 mkdir -p files/etc/hotplug.d/net
 cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
 #!/bin/sh
 
 do_fw_setup() {
-    # 创建/更新 docker zone，使用 device 匹配（fw4 br-+ 通配）
-    if ! uci show firewall.docker >/dev/null 2>&1; then
-        NEW=$(uci add firewall zone)
-        uci rename "$NEW"="docker"
-    fi
+    local retry=0
+    while [ $retry -lt 3 ]; do
+        if uci show firewall.docker >/dev/null 2>&1; then
+            break
+        fi
 
-    uci set firewall.docker.name='docker'
-    uci set firewall.docker.input='ACCEPT'
-    uci set firewall.docker.output='ACCEPT'
-    uci set firewall.docker.forward='ACCEPT'
-    uci set firewall.docker.masq='1'
+        uci add firewall zone
+        uci rename firewall.@zone[-1]="docker"
 
-    uci -q del firewall.docker.network || true
-    uci set firewall.docker.device='docker0'
-    uci add_list firewall.docker.device='br-+'
+        uci set firewall.docker.name='docker'
+        uci set firewall.docker.input='ACCEPT'
+        uci set firewall.docker.output='ACCEPT'
+        uci set firewall.docker.forward='ACCEPT'
+        uci set firewall.docker.masq='1'
 
-    # 转发规则 docker→wan
-    if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
-        uci add firewall forwarding
-        uci rename firewall.@forwarding[-1]="fwd_docker_wan"
-        uci set firewall.fwd_docker_wan.src="docker"
-        uci set firewall.fwd_docker_wan.dest="wan"
-    fi
+        uci del firewall.docker.network
+        uci set firewall.docker.device='docker0'
+        uci add_list firewall.docker.device='br-+'
 
-    # 转发规则 lan→docker
-    if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
-        uci add firewall forwarding
-        uci rename firewall.@forwarding[-1]="fwd_lan_docker"
-        uci set firewall.fwd_lan_docker.src="lan"
-        uci set firewall.fwd_lan_docker.dest="docker"
-    fi
+        if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
+            uci add firewall forwarding
+            uci rename firewall.@forwarding[-1]="fwd_docker_wan"
+            uci set firewall.fwd_docker_wan.src="docker"
+            uci set firewall.fwd_docker_wan.dest="wan"
+        fi
 
-    uci commit firewall
-    /etc/init.d/firewall reload >/dev/null 2>&1
+        if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
+            uci add firewall forwarding
+            uci rename firewall.@forwarding[-1]="fwd_lan_docker"
+            uci set firewall.fwd_lan_docker.src="lan"
+            uci set firewall.fwd_lan_docker.dest="docker"
+        fi
+
+        uci commit firewall
+        logger -t docker_fw "docker防火墙uci配置已持久写入磁盘，不刷新运行时防火墙"
+
+        if uci show firewall.docker >/dev/null 2>&1; then
+            return 0
+        fi
+        retry=$((retry+1))
+        sleep 1
+    done
+    logger -t docker_fw "docker防火墙uci写入结束"
 }
 
-# 网卡热插拔事件触发（仅 add 事件，避免 remove 时误 reload）
 case "$ACTION" in
 add)
-    [ "$INTERFACE" = "docker0" ] && do_fw_setup
+    if [ "$INTERFACE" = "docker0" ]; then
+        logger -t docker_fw "hotplug捕获docker0 add事件"
+        sleep 1
+        do_fw_setup
+    fi
+;;
+remove)
 ;;
 esac
 
-# 支持外部调用：/etc/hotplug.d/net/90-docker-br-attach run
 if [ "x$1" = "xrun" ]; then
     do_fw_setup
 fi
 DOCKER_FW_EOF
 chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
 
-# =====================================================================
-# quickstart首页CPU圆环温度修复 IPQ60xx(JDCloud AX6600)
-# 固件未安装autocore，依赖 /sbin/cpuinfo 脚本输出
-# =====================================================================
-echo "--- 部署quickstart CPU温度脚本 /sbin/cpuinfo ---"
-mkdir -p openwrt/files/sbin
-cat > openwrt/files/sbin/cpuinfo <<'CPUINFO_EOF'
+# 兜底脚本：防止hotplug丢失docker0 add事件，后台仅做uci写入，不操作防火墙运行时
+mkdir -p files/etc/rc.d
+cat > files/etc/rc.d/S99dockerfw << 'EOF'
 #!/bin/sh
+(
+    sleep 12
+    if [ -d /sys/class/net/docker0 ]; then
+        /etc/hotplug.d/net/90-docker-br-attach run
+    fi
+) &
+EOF
+chmod 755 files/etc/rc.d/S99dockerfw
+
+# ===== CPU 温度/架构双行脚本（刷机首次启动时自动创建） =====
+mkdir -p package/base-files/files/etc/uci-defaults
+cat > package/base-files/files/etc/uci-defaults/99-cpuinfo << 'EOF'
+#!/bin/sh
+cat > /sbin/cpuinfo << 'SCRIPT'
+#!/bin/sh
+grep -m1 "Processor" /proc/cpuinfo | sed 's/^Processor[[:space:]]*:[[:space:]]*//'
 TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"
 if [ -r "$TEMP_PATH" ]; then
     raw_temp=$(cat "$TEMP_PATH")
     temp_int=$(( raw_temp / 1000 ))
     temp_dec=$(( (raw_temp / 100) % 10 ))
-    cpu_temp="${temp_int}.${temp_dec}"
-    echo "CPU ${cpu_temp}°C"
+    echo "CPU ${temp_int}.${temp_dec}°C"
 else
     echo "CPU 0.0°C"
 fi
-CPUINFO_EOF
-chmod 755 openwrt/files/sbin/cpuinfo
-echo "✅ /sbin/cpuinfo 脚本写入并赋予755权限"
+SCRIPT
+chmod 755 /sbin/cpuinfo
+exit 0
+EOF
+chmod 755 package/base-files/files/etc/uci-defaults/99-cpuinfo
 
 echo "✅ [DIY-P2] 所有配置完成"
