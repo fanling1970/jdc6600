@@ -128,52 +128,83 @@ exit 0
 EOF
 chmod 755 package/base-files/files/etc/uci-defaults/99-docker-data
 
-mkdir -p files/etc
-cat > files/etc/rc.local <<'RCLOCAL_EOF'
-# Put your custom commands here that should be executed once
-# the system init finished. By default this file does nothing.
-
-(
-sleep 8
-if uci show firewall.docker >/dev/null 2>&1; then
-        /etc/init.d/firewall reload
-fi
-) &
-
-exit 0
-RCLOCAL_EOF
-chmod 755 files/etc/rc.local
-
-mkdir -p files/etc/uci-defaults
-cat > files/etc/uci-defaults/99-set-docker-fw <<'UCIEOF'
+# ======================================================
+# 集成 docker防火墙hotplug脚本，使用全局files覆盖，不改动package源码
+# ======================================================
+echo "--- 部署docker防火墙hotplug脚本 ---"
+mkdir -p files/etc/hotplug.d/net
+cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
 #!/bin/sh
-uci show firewall.docker >/dev/null 2>&1 || {
-uci add firewall zone
-uci rename firewall.@zone[-1] docker
-uci set firewall.docker.name='docker'
-uci set firewall.docker.input='ACCEPT'
-uci set firewall.docker.output='ACCEPT'
-uci set firewall.docker.forward='ACCEPT'
-uci set firewall.docker.masq='1'
-uci del firewall.docker.network
-uci set firewall.docker.device='docker0'
-uci add_list firewall.docker.device='br-+'
 
-uci add firewall forwarding
-uci rename firewall.@forwarding[-1] fwd_docker_wan
-uci set firewall.fwd_docker_wan.src='docker'
-uci set firewall.fwd_docker_wan.dest='wan'
+do_fw_setup() {
+    # 创建/更新 docker zone，使用 device 匹配（fw4 br‑+通配）
+    if ! uci show firewall.docker >/dev/null 2>&1; then
+        uci add firewall zone
+        uci rename firewall.@zone[-1]="docker"
+    fi
 
-uci add firewall forwarding
-uci rename firewall.@forwarding[-1] fwd_lan_docker
-uci set firewall.fwd_lan_docker.src='lan'
-uci set firewall.fwd_lan_docker.dest='docker'
+    uci set firewall.docker.name='docker'
+    uci set firewall.docker.input='ACCEPT'
+    uci set firewall.docker.output='ACCEPT'
+    uci set firewall.docker.forward='ACCEPT'
+    uci set firewall.docker.masq='1'
 
-uci commit firewall
+    uci del firewall.docker.network
+    uci set firewall.docker.device='docker0'
+    uci add_list firewall.docker.device='br-+'
+
+    # 转发规则 docker→wan
+    if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
+        uci add firewall forwarding
+        uci rename firewall.@forwarding[-1]="fwd_docker_wan"
+        uci set firewall.fwd_docker_wan.src="docker"
+        uci set firewall.fwd_docker_wan.dest="wan"
+    fi
+
+    # 转发规则 lan→docker
+    if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
+        uci add firewall forwarding
+        uci rename firewall.@forwarding[-1]="fwd_lan_docker"
+        uci set firewall.fwd_lan_docker.src="lan"
+        uci set firewall.fwd_lan_docker.dest="docker"
+    fi
+
+    uci commit firewall
+    /etc/init.d/firewall reload >/dev/null 2>&1
 }
-UCIEOF
-chmod 755 files/etc/uci-defaults/99-set-docker-fw
 
+# 网卡热插拔事件触发
+case "$ACTION" in
+add|remove)
+    [ "$INTERFACE" = "docker0" ] && do_fw_setup
+;;
+esac
+
+# 支持外部调用：/etc/hotplug.d/net/90-docker-br-attach run
+if [ "x$1" = "xrun" ]; then
+    do_fw_setup
+fi
+DOCKER_FW_EOF
+chmod 755 files/etc/hotplug.d/net/90-docker-br-attach
+
+echo "--- 生成dockerd post‑start钩子，不替换原版init脚本 ---"
+mkdir -p files/etc/procd/hook.d
+cat > files/etc/procd/hook.d/99-docker-fw-hook << 'DOCKER_HOOK_EOF'
+#!/bin/sh
+[ "$1" = "post_start" ] && [ "$2" = "dockerd" ] && {
+    # 循环等待docker0网桥出现，最多等待8秒
+    wait_cnt=0
+    while [ ! -d /sys/class/net/docker0 ] && [ $wait_cnt -lt 8 ]; do
+        sleep 1
+        wait_cnt=$((wait_cnt+1))
+    done
+    # docker0出现之后才执行防火墙配置
+    if [ -d /sys/class/net/docker0 ];then
+        /etc/hotplug.d/net/90-docker-br-attach run
+    fi
+}
+DOCKER_HOOK_EOF
+chmod 755 files/etc/procd/hook.d/99-docker-fw-hook
 
 # ===== CPU 温度/架构双行脚本（刷机首次启动时自动创建） =====
 mkdir -p package/base-files/files/etc/uci-defaults
