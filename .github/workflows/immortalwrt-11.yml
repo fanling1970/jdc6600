@@ -44,7 +44,7 @@ jobs:
       - name: 2.安装Ubuntu编译依赖(新增ccache)
         run: |
           sudo apt update
-          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl ccache
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
           sudo apt autoremove -y
           sudo apt clean
 
