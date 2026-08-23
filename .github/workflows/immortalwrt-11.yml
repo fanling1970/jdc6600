@@ -18,6 +18,11 @@ on:
 jobs:
   build_firmware:
     runs-on: ubuntu-22.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: 1
+      CCACHE_COMPRESSLEVEL: 6
+      CCACHE_MAXSIZE: 10G
     steps:
       - name: 磁盘空间最大化
         uses: easimon/maximize-build-space@master
@@ -36,12 +41,32 @@ jobs:
       - name: 磁盘空间检查
         run: df -hT
 
-      - name: 2.安装Ubuntu编译依赖
+      - name: 2.安装Ubuntu编译依赖(新增ccache)
         run: |
           sudo apt update
-          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl ccache
           sudo apt autoremove -y
           sudo apt clean
+
+      # ========== 缓存开始 ==========
+      - name: Cache ccache编译缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ github.run_id }}-ccache-${{ github.ref }}-${{ github.event.inputs.TARGET_PROFILE }}
+          restore-keys: |
+            ccache-${{ github.ref }}-${{ github.event.inputs.TARGET_PROFILE }}
+            ccache-${{ github.ref }}
+
+      - name: Cache OpenWrt dl下载包缓存
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: ${{ github.run_id }}-dl-${{ github.ref }}-${{ github.event.inputs.TARGET_PROFILE }}
+          restore-keys: |
+            dl-${{ github.ref }}-${{ github.event.inputs.TARGET_PROFILE }}
+            dl-${{ github.ref }}
+      # ========== 缓存结束 ==========
 
       - name: 3.克隆 ImmortalWrt 源码
         run: |
@@ -67,18 +92,14 @@ jobs:
           rm -rf feeds/luci/collections/luci-lib-docker
           rm -rf feeds/packages/utils/luci-lib-docker
           rm -rf package/luci-app-dockerman package/luci-lib-docker
-
           # 2. 克隆到临时目录
           git clone --depth=1 https://github.com/lisaac/luci-lib-docker.git tmp-lib-docker
           git clone --depth=1 https://github.com/lisaac/luci-app-dockerman.git tmp-app-dockerman
-
           # 3. 提取实际包目录到 package 根层级（Makefile 移到顶层，编译系统才能识别）
           mv tmp-lib-docker/collections/luci-lib-docker package/luci-lib-docker
           mv tmp-app-dockerman/applications/luci-app-dockerman package/luci-app-dockerman
-
           # 4. 清理临时目录
           rm -rf tmp-lib-docker tmp-app-dockerman
-
           # 5. 移除版本号v前缀，适配APK包格式强制校验
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
@@ -110,6 +131,9 @@ jobs:
         run: make download -j${{ github.event.inputs.COMPILE_THREAD }}
         working-directory: ./openwrt
 
+      - name: 打印ccache统计(编译前)
+        run: ccache -s
+
       - name: 11.编译【高线程失败自动降级单线程】
         id: compile_task
         run: |
@@ -118,7 +142,6 @@ jobs:
           echo "==== 使用线程 $COMPILE_THREAD 开始编译 ===="
           make -j${COMPILE_THREAD} 2>&1 | tee compile_log.txt
           ret_code=$?
-
           if [[ ${ret_code} -ne 0 ]] || grep -q "ERROR:" compile_log.txt ;then
               echo "==================== 检测编译出错，降级单线程 V=s 重试 ===================="
               make -j1 V=s 2>&1 | tee -a compile_log.txt
@@ -126,6 +149,9 @@ jobs:
           fi
           exit ${ret_code}
         working-directory: ./openwrt
+
+      - name: 打印ccache统计(编译结束)
+        run: ccache -s
 
       - name: 12.打包日志
         if: ${{ github.event.inputs.SAVE_LOG == true || failure() }}
@@ -147,7 +173,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ImmortalWrt_JDC_AX6600_factory
+          name: ImmortalWrt_${{ github.event.inputs.TARGET_PROFILE }}_factory
           path: openwrt/bin/targets/qualcommax/ipq60xx/*factory.bin
           retention-days: 15
 
@@ -155,6 +181,6 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ImmortalWrt_JDC_AX6600_sysupgrade
+          name: ImmortalWrt_${{ github.event.inputs.TARGET_PROFILE }}_sysupgrade
           path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
           retention-days: 15
