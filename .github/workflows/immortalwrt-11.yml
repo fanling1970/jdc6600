@@ -41,14 +41,14 @@ jobs:
       - name: 磁盘空间检查
         run: df -hT
 
-      - name: 2.安装Ubuntu编译依赖(新增ccache)
+      - name: 2.安装Ubuntu编译依赖(含ccache)
         run: |
           sudo apt update
-          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl ccache
           sudo apt autoremove -y
           sudo apt clean
 
-      # ========== 缓存开始 ==========
+      # ========== 缓存【移到apt安装之后！】 ==========
       - name: Cache ccache编译缓存
         uses: actions/cache@v4
         with:
@@ -67,6 +67,9 @@ jobs:
             dl-${{ github.ref }}-${{ github.event.inputs.TARGET_PROFILE }}
             dl-${{ github.ref }}
       # ========== 缓存结束 ==========
+
+      - name: 打印ccache统计(安装+缓存恢复后)
+        run: ccache -s
 
       - name: 3.克隆 ImmortalWrt 源码
         run: |
@@ -103,7 +106,7 @@ jobs:
           # 5. 移除版本号v前缀，适配APK包格式强制校验
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
-          
+
           echo "第三方 Dockerman 替换完成，目录结构与APK格式已适配"
 
       - name: 6.更新安装feeds
