@@ -12,9 +12,10 @@
 # 修正：全文件YAML缩进规范，消除解析错误
 # 修复1：第三方Dockerman适配APK包格式，移除版本号v前缀
 # 修复2：修正lisaac仓库目录结构，提取Makefile到包根目录
+# 修复3：针对nas‑packages‑luci自动带入的md‑raid kmod，适配kernel6.18，屏蔽冲突内核模块
 #
 
-name: immortalwrt-1
+name: immortalwrt优化版
 
 # 禁用自动触发，仅保留手动触发
 on:
@@ -39,104 +40,22 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # 第一步：最大化构建空间（优先执行）
-      - name: 最大化构建空间
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 2048
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
+      - name: 1. 拉取当前仓库全部文件
+        uses: actions/checkout@v4
 
-      - name: 清理前磁盘空间检查
+      - name: 2. 安装Ubuntu全套编译依赖
         run: |
-          echo "Before freeing up disk space"
-          echo "=============================================================================="
-          df -hT
-          echo "=============================================================================="
-
-      # 第二步：优化磁盘空间
-      - name: 优化磁盘空间
-        uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
-        with:
-          operate_sudo: "True"
-          general_include: ".+"
-          general_exclude: |-
-            ^GCC$
-            ^G\+\+$
-            Clang
-            LLVM
-            Python
-            Git
-          docker_include: ".+"
-          docker_prune: "True"
-          docker_clean: "True"
-          apt_prune: "True"
-          apt_clean: "True"
-          homebrew_prune: "False"
-          homebrew_clean: "False"
-          npm_prune: "False"
-          npm_clean: "False"
-          os_swap: "False"
-
-      - name: 清理后磁盘空间检查
-        run: |
-          echo "Free up disk space complete"
-          echo "=============================================================================="
-          df -hT
-          echo "=============================================================================="
-
-      # 第三步：关键磁盘空间检查
-      - name: 关键磁盘空间检查
-        run: |
-          echo "关键步骤前磁盘空间状态："
-          echo "=============================================================================="
-          df -hT
-          echo "可用空间检查："
-          AVAILABLE=$(df / --output=avail | tail -1)
-          if [ $AVAILABLE -lt 10485760 ]; then
-            echo "警告：磁盘可用空间不足10GB，可能影响编译"
-            echo "当前可用空间：$((AVAILABLE/1024/1024))GB"
-          fi
-          echo "=============================================================================="
-
-      - name: 检出代码
-        uses: actions/checkout@main
-
-      # 第四步：初始化编译环境
-      - name: 初始化编译环境
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt-get -qq update
-          echo "安装核心编译工具..."
-          sudo -E apt-get -qq install build-essential gcc g++ make cmake git curl wget
-          echo "安装OpenWrt编译依赖..."
-          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison \
-          bzip2 ccache cpio device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-          gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-          libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
-          mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools \
-          libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
-          vim xmlto xxd zlib1g-dev python3-setuptools
-          echo "清理不必要的包..."
-          sudo -E apt-get -qq autoremove --purge
-          sudo -E apt-get -qq clean
-          sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
-          /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
-          sudo timedatectl set-timezone "$TZ"
-          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
-          echo "编译环境初始化完成"
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt autoremove -y
+          sudo apt clean
 
       - name: 克隆源码
         working-directory: ./
         run: |
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: 加载part1
+      - name: 加载自定义软件源
         run: |
           [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $DIY_P1_SH
@@ -152,66 +71,18 @@ jobs:
           rm -rf dl/cargo build_dir/target-aarch64_cortex-a53_musl/shadowsocks-rust*
           echo "Rust环境清理完成，已规避shadowsocks-rust编译错误"
 
-      # 【关键修复】替换官方Dockerman + 修正目录结构 + APK版本号适配
-      - name: 替换为第三方完整版 Dockerman (修复目录结构+APK适配)
-        run: |
-          cd openwrt
-          # 1. 彻底清理所有同名包，杜绝双版本冲突
-          rm -rf feeds/luci/applications/luci-app-dockerman
-          rm -rf feeds/luci/collections/luci-lib-docker
-          rm -rf feeds/packages/utils/luci-lib-docker
-          rm -rf package/luci-app-dockerman package/luci-lib-docker
-
-          # 2. 克隆到临时目录
-          git clone --depth=1 https://github.com/lisaac/luci-lib-docker.git tmp-lib-docker
-          git clone --depth=1 https://github.com/lisaac/luci-app-dockerman.git tmp-app-dockerman
-
-          # 3. 提取实际包目录到 package 根层级（Makefile 移到顶层，编译系统才能识别）
-          mv tmp-lib-docker/collections/luci-lib-docker package/luci-lib-docker
-          mv tmp-app-dockerman/applications/luci-app-dockerman package/luci-app-dockerman
-
-          # 4. 清理临时目录
-          rm -rf tmp-lib-docker tmp-app-dockerman
-
-          # 5. 移除版本号v前缀，适配APK包格式强制校验
-          sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-lib-docker/Makefile
-          sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
-          
-          echo "第三方 Dockerman 替换完成，目录结构与APK格式已适配"
-
       - name: 更新软件源
         run: cd openwrt && ./scripts/feeds update -a
 
       - name: 安装软件源
         run: cd openwrt && ./scripts/feeds install -a
 
-      - name: 集成CPU温度自定义脚本
+      - name: 加载自定义配置
         run: |
-          mkdir -p files/sbin
-          echo '#!/bin/sh' > files/sbin/cpuinfo
-          echo '# 适配IPQ60xx平台的CPU温度读取' >> files/sbin/cpuinfo
-          echo 'TEMP_PATH="/sys/class/thermal/thermal_zone0/temp"' >> files/sbin/cpuinfo
-          echo '' >> files/sbin/cpuinfo
-          echo 'if [ -r "$TEMP_PATH" ]; then' >> files/sbin/cpuinfo
-          echo '    raw_temp=$(cat "$TEMP_PATH")' >> files/sbin/cpuinfo
-          echo '    temp_int=$(( raw_temp / 1000 ))' >> files/sbin/cpuinfo
-          echo '    temp_dec=$(( (raw_temp / 100) % 10 ))' >> files/sbin/cpuinfo
-          echo '    cpu_temp="${temp_int}.${temp_dec}"' >> files/sbin/cpuinfo
-          echo '    echo "CPU ${cpu_temp}°C"' >> files/sbin/cpuinfo
-          echo 'else' >> files/sbin/cpuinfo
-          echo '    echo "CPU 0.0°C"' >> files/sbin/cpuinfo
-          echo 'fi' >> files/sbin/cpuinfo
-          chmod +x files/sbin/cpuinfo
-
-      - name: 加载part2
-        run: |
-          echo "==== DEBUG 工作目录 ===="
-          ls -la
-
+          [ -e files ] && mv files openwrt/files
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           chmod +x $DIY_P2_SH
           cd openwrt
-          echo "==== 开始执行 diy‑part2.sh ===="
           $GITHUB_WORKSPACE/$DIY_P2_SH
 
       - name: 下载软件包
