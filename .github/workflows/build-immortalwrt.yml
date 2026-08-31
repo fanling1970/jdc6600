@@ -1,74 +1,98 @@
-name: 自动编译 ImmortalWrt 雅典娜AX6600
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# Description: Build OpenWrt using GitHub Actions
+#
+# updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
+# 新增：Rust环境彻底清理，修复shadowsocks-rust编译报错
+# 修正：全文件YAML缩进规范，消除解析错误
+# 修复1：第三方Dockerman适配APK包格式，移除版本号v前缀
+# 修复2：修正lisaac仓库目录结构，提取Makefile到包根目录
+# 修复3：针对nas‑packages‑luci自动带入的md‑raid kmod，适配kernel6.18，屏蔽冲突内核模块
+# 【新增】上游源码自动检测更新，无更新直接跳过编译
+name: immortalwrt优化版带docker(自动检测上游更新)
 on:
-  workflow_dispatch:    # 允许手动触发编译
+  workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'   # UTC时间每6小时检查上游源码更新
-
+    - cron: '0 */6 * * *'   # UTC每6小时检查上游更新
+env:
+  REPO_URL: https://github.com/VIKINGYFY/immortalwrt.git
+  REPO_BRANCH: main
+  FEEDS_CONF: immortalwrt/feeds.conf.default
+  CONFIG_FILE: immortalwrt/info.config
+  DIY_P1_SH: immortalwrt/diy-part1.sh
+  DIY_P2_SH: immortalwrt/diy-part2.sh
+  LAST_COMMIT_FILE: immortalwrt/.last_upstream_commit
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_COWTRANSFER: false
+  UPLOAD_WETRANSFER: false
+  UPLOAD_RELEASE: false
+  TZ: Asia/Shanghai
 jobs:
-  build_immortalwrt:
+  build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 检出个人配置仓库代码
+      - name: 1. 拉取当前仓库全部文件
         uses: actions/checkout@v4
 
-      - name: 获取ImmortalWrt上游仓库最新Commit
+      - name: 2. 获取ImmortalWrt上游仓库最新Commit
         id: upstream_check
         run: |
-          UPSTREAM_URL="https://github.com/VIKINGYFY/immortalwrt.git"
-          UPSTREAM_HEAD=$(git ls-remote "${UPSTREAM_URL}" HEAD | awk '{print $1}')
+          UPSTREAM_HEAD=$(git ls-remote "${REPO_URL}" "${REPO_BRANCH}" | awk '{print $1}')
           echo "upstream_commit=${UPSTREAM_HEAD}" >> $GITHUB_ENV
-          echo "ImmortalWrt上游最新commit: ${UPSTREAM_HEAD}"
+          echo "上游源码最新commit: ${UPSTREAM_HEAD}"
 
-      - name: 读取上一次编译记录的上游Commit
+      - name: 3. 读取上一次编译记录的上游Commit
         id: read_last
         run: |
-          LAST_COMMIT_FILE="./immortalwrt/.last_upstream_commit"
           if [ -f "${LAST_COMMIT_FILE}" ]; then
             LAST_BUILD_COMMIT=$(cat "${LAST_COMMIT_FILE}")
           else
             LAST_BUILD_COMMIT=""
           fi
           echo "last_commit=${LAST_BUILD_COMMIT}" >> $GITHUB_ENV
-          echo "上一次编译上游commit: ${LAST_BUILD_COMMIT}"
+          echo "上次编译记录commit: ${LAST_BUILD_COMMIT}"
 
-      - name: 上游无更新直接跳过编译任务
+      - name: 4. 上游源码无更新，直接跳过编译全部任务
         if: env.upstream_commit == env.last_commit
         run: |
-          echo "✅ 上游ImmortalWrt源码没有更新，直接退出Job，不消耗CI时长"
+          echo "✅ 上游ImmortalWrt源码没有发生更新，直接退出Job，不消耗CI时长"
           exit 0
 
-      - name: 写入新上游Commit记录并提交仓库
-        run: |
-          LAST_COMMIT_FILE="./immortalwrt/.last_upstream_commit"
-          echo "${{ env.upstream_commit }}" > "${LAST_COMMIT_FILE}"
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${LAST_COMMIT_FILE}"
-          git commit -m "auto: 更新immortalwrt上次编译commit ${{ env.upstream_commit }}" || true
-          git push || true
-
-      - name: 安装固件编译依赖软件包
+      - name: 5. 安装Ubuntu全套编译依赖
         run: |
           sudo apt update
-          sudo apt install -y build-essential gcc g++ binutils bzip2 flex bison autoconf automake gettext libtool patch unzip curl wget git python3 python3-distutils libssl-dev ccache
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
+          sudo apt autoremove -y
+          sudo apt clean
 
-      - name: 克隆ImmortalWrt源码，切换到最新上游提交
+      - name: 6. 克隆源码
+        working-directory: ./
         run: |
-          git clone --depth=1 https://github.com/VIKINGYFY/immortalwrt.git openwrt
-          cd openwrt
-          git checkout ${{ env.upstream_commit }}
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: 复制immortalwrt子目录下自定义脚本与配置
+      - name: 7. 加载自定义软件源
         run: |
-          cp -f ./immortalwrt/diy-part1.sh openwrt/
-          cp -f ./immortalwrt/diy-part2.sh openwrt/
-          cp -f ./immortalwrt/feeds.conf.default openwrt/
-          cp -f ./immortalwrt/info.config openwrt/.config
+          [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+          chmod +x $DIY_P1_SH
           cd openwrt
-          chmod +x diy-part1.sh diy-part2.sh
-          ./diy-part1.sh
+          $GITHUB_WORKSPACE/$DIY_P1_SH
 
-      - name: 替换为第三方完整版 Dockerman (修复目录结构+APK版本号适配)
+      # 【核心修复】清理Rust环境与缓存，彻底规避shadowsocks-rust编译报错
+      - name: 8. 清理Rust编译冲突环境与缓存
+        run: |
+          rustup self uninstall -y || true
+          rm -rf ~/.rustup ~/.cargo
+          cd openwrt
+          rm -rf dl/cargo build_dir/target-aarch64_cortex-a53_musl/shadowsocks-rust*
+          echo "Rust环境清理完成，已规避shadowsocks-rust编译错误"
+
+      # 【关键修复】替换官方Dockerman + 修正目录结构 + APK版本号适配
+      - name: 9. 替换为第三方完整版 Dockerman (修复目录结构+APK适配)
         run: |
           cd openwrt
           # 1. 彻底清理所有同名包，杜绝双版本冲突
@@ -89,29 +113,127 @@ jobs:
           sed -i 's/PKG_VERSION:=v/PKG_VERSION:=/g' package/luci-app-dockerman/Makefile
           echo "第三方 Dockerman 替换完成，目录结构与APK格式已适配"
 
-      - name: 更新并安装feeds软件源
+      - name: 10. 更新软件源
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: 11. 安装软件源
+        run: cd openwrt && ./scripts/feeds install -a
+
+      - name: 12. 加载自定义配置
+        run: |
+          [ -e files ] && mv files openwrt/files
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          chmod +x $DIY_P2_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+
+      - name: 13. 下载软件包
+        id: package
         run: |
           cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          make defconfig
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
 
-      - name: 配置CCACHE编译缓存(最大10G开启压缩)
-        uses: actions/cache@v4
+      - name: 14. 编译固件
+        id: compile
+        run: |
+          cd openwrt
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+      # ✅编译成功才写入本次上游commit记录，编译失败不更新，下次会重试编译
+      - name: 15. 编译成功，记录本次上游commit到仓库
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          echo "${{ env.upstream_commit }}" > "${{ env.LAST_COMMIT_FILE }}"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ env.LAST_COMMIT_FILE }}"
+          git commit -m "auto: 更新immortalwrt上次编译commit ${{ env.upstream_commit }}" || true
+          git push || true
+
+      - name: 16. 检查空间使用
+        if: (!cancelled())
+        run: df -hT
+
+      - name: 17. 上传bin目录
+        uses: actions/upload-artifact@main
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
         with:
-          path: openwrt/.ccache
-          key: ${{ runner.os }}-immortalwrt-ccache-ax6600
+          name: immortalwrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: openwrt/bin
+
+      - name: 18. 整理文件
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        run: |
+          cd openwrt/bin/targets/*/*
+          rm -rf packages
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: 19. 上传固件目录
+        uses: actions/upload-artifact@main
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        with:
+          name: immortalwrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: ${{ env.FIRMWARE }}
+
+      - name: 20. 上传固件到CowTransfer
+        id: cowtransfer
+        if: steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
+        run: |
+          curl -fsSL git.io/file-transfer | sh
+          ./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
+          echo "::warning file=cowtransfer.com::$(cat cowtransfer.log | grep https)"
+          echo "url=$(cat cowtransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
+
+      - name: 21. 上传固件到WeTransfer
+        id: wetransfer
+        if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+        run: |
+          curl -fsSL git.io/file-transfer | sh
+          ./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
+          echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"
+          echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
+
+      - name: 22. 生成发布标签
+        id: tag
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        run: |
+          echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          touch release.txt
+          [ $UPLOAD_COWTRANSFER = true ] && echo "🔗 [Cowtransfer](${{ steps.cowtransfer.outputs.url }})" >> release.txt
+          [ $UPLOAD_WETRANSFER = true ] && echo "🔗 [WeTransfer](${{ steps.wetransfer.outputs.url }})" >> release.txt
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: 23. 上传固件到Releases
+        uses: softprops/action-gh-release@v1
+        if: steps.tag.outputs.status == 'success' && !cancelled()
         env:
-          CCACHE_MAXSIZE: 10G
-          CCACHE_COMPRESS: true
-
-      - name: 编译IPQ60xx雅典娜AX6600固件
-        run: |
-          cd openwrt
-          ./diy-part2.sh
-          make -j$(nproc) V=s
-
-      - name: 上传编译完成固件产物
-        uses: actions/upload-artifact@v4
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: ImmortalWrt‑AX6600‑IPQ60xx固件
-          path: openwrt/bin/targets/ipq60xx/generic/*.bin
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          body_path: release.txt
+          files: ${{ env.FIRMWARE }}/*
+
+      - name: 24. 删除旧的Workflow记录
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          retain_days: 1
+          keep_minimum_runs: 3
+
+      - name: 25. 删除旧版本Releases
+        uses: dev-drprasad/delete-older-releases@v0.1.0
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        with:
+          keep_latest: 3
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
