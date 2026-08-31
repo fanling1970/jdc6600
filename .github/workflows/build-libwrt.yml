@@ -12,7 +12,7 @@
 # 修复1：第三方Dockerman适配APK包格式，移除版本号v前缀
 # 修复2：修正lisaac仓库目录结构，提取Makefile到包根目录
 # 修复3：针对nas‑packages‑luci自动带入的md‑raid kmod，适配kernel6.18，屏蔽冲突内核模块
-# 【新增】libwrt上游源码自动检测更新，无更新直接跳过编译
+# 【修复】闸门判断，上游无更新全部后续步骤skipped，exit 0不能终止job
 name: libwrt优化版带docker(自动检测上游更新)
 on:
   workflow_dispatch:
@@ -57,13 +57,19 @@ jobs:
           echo "last_commit=${LAST_BUILD_COMMIT}" >> $GITHUB_ENV
           echo "上次编译记录commit: ${LAST_BUILD_COMMIT}"
 
-      - name: 4. 上游源码无更新，直接跳过编译全部任务
-        if: env.upstream_commit == env.last_commit
+      - name: 4. 判断是否需要编译（Gate闸门）
+        id: check_gate
         run: |
-          echo "✅ 上游LibWrt源码没有发生更新，直接退出Job，不消耗CI时长"
-          exit 0
+          if [[ "${{ env.upstream_commit }}" == "${{ env.last_commit }}" ]]; then
+            echo "✅ 上游LibWrt源码没有发生更新，跳过编译流程"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "🔔 上游源码检测到更新，开始完整编译流程"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: 5. 安装Ubuntu全套编译依赖
+        if: steps.check_gate.outputs.should_build == 'true'
         run: |
           sudo apt update
           sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget unzip libssl-dev python3 python3-pip time rsync curl
@@ -71,11 +77,13 @@ jobs:
           sudo apt clean
 
       - name: 6. 克隆源码
+        if: steps.check_gate.outputs.should_build == 'true'
         working-directory: ./
         run: |
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
 
       - name: 7. 加载自定义软件源
+        if: steps.check_gate.outputs.should_build == 'true'
         run: |
           [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $DIY_P1_SH
@@ -84,6 +92,7 @@ jobs:
 
       # 【核心修复】清理Rust环境与缓存，彻底规避shadowsocks-rust编译报错
       - name: 8. 清理Rust编译冲突环境与缓存
+        if: steps.check_gate.outputs.should_build == 'true'
         run: |
           rustup self uninstall -y || true
           rm -rf ~/.rustup ~/.cargo
@@ -93,6 +102,7 @@ jobs:
 
       # 【关键修复】替换官方Dockerman + 修正目录结构 + APK版本号适配
       - name: 9. 替换为第三方完整版 Dockerman (修复目录结构+APK适配)
+        if: steps.check_gate.outputs.should_build == 'true'
         run: |
           cd openwrt
           # 1. 彻底清理所有同名包，杜绝双版本冲突
@@ -114,12 +124,15 @@ jobs:
           echo "第三方 Dockerman 替换完成，目录结构与APK格式已适配"
 
       - name: 10. 更新软件源
+        if: steps.check_gate.outputs.should_build == 'true'
         run: cd openwrt && ./scripts/feeds update -a
 
       - name: 11. 安装软件源
+        if: steps.check_gate.outputs.should_build == 'true'
         run: cd openwrt && ./scripts/feeds install -a
 
       - name: 12. 加载自定义配置
+        if: steps.check_gate.outputs.should_build == 'true'
         run: |
           [ -e files ] && mv files openwrt/files
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
@@ -129,6 +142,7 @@ jobs:
 
       - name: 13. 下载软件包
         id: package
+        if: steps.check_gate.outputs.should_build == 'true'
         run: |
           cd openwrt
           make defconfig
@@ -138,6 +152,7 @@ jobs:
 
       - name: 14. 编译固件
         id: compile
+        if: steps.check_gate.outputs.should_build == 'true'
         run: |
           cd openwrt
           echo -e "$(nproc) thread compile"
@@ -149,7 +164,7 @@ jobs:
 
       # ✅编译成功才写入本次上游commit记录，编译失败不更新，下次会重试编译
       - name: 15. 编译成功，记录本次上游commit到仓库
-        if: steps.compile.outputs.status == 'success'
+        if: steps.check_gate.outputs.should_build == 'true' && steps.compile.outputs.status == 'success'
         run: |
           echo "${{ env.upstream_commit }}" > "${{ env.LAST_COMMIT_FILE }}"
           git config --global user.name "github-actions[bot]"
@@ -159,19 +174,19 @@ jobs:
           git push || true
 
       - name: 16. 检查空间使用
-        if: (!cancelled())
+        if: steps.check_gate.outputs.should_build == 'true' && (!cancelled())
         run: df -hT
 
       - name: 17. 上传bin目录
         uses: actions/upload-artifact@main
-        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+        if: steps.check_gate.outputs.should_build == 'true' && steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
         with:
           name: libwrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: openwrt/bin
 
       - name: 18. 整理文件
         id: organize
-        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        if: steps.check_gate.outputs.should_build == 'true' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
         run: |
           cd openwrt/bin/targets/*/*
           rm -rf packages
@@ -180,14 +195,14 @@ jobs:
 
       - name: 19. 上传固件目录
         uses: actions/upload-artifact@main
-        if: steps.organize.outputs.status == 'success' && !cancelled()
+        if: steps.check_gate.outputs.should_build == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
         with:
           name: libwrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
 
       - name: 20. 上传固件到CowTransfer
         id: cowtransfer
-        if: steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
+        if: steps.check_gate.outputs.should_build == 'true' && steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
         run: |
           curl -fsSL git.io/file-transfer | sh
           ./transfer cow --block 2621440 -s -p 64 --no-progress ${FIRMWARE} 2>&1 | tee cowtransfer.log
@@ -196,7 +211,7 @@ jobs:
 
       - name: 21. 上传固件到WeTransfer
         id: wetransfer
-        if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+        if: steps.check_gate.outputs.should_build == 'true' && steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
         run: |
           curl -fsSL git.io/file-transfer | sh
           ./transfer wet -s -p 16 --no-progress ${FIRMWARE} 2>&1 | tee wetransfer.log
@@ -205,7 +220,7 @@ jobs:
 
       - name: 22. 生成发布标签
         id: tag
-        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        if: steps.check_gate.outputs.should_build == 'true' && env.UPLOAD_RELEASE == 'true' && !cancelled()
         run: |
           echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
           touch release.txt
@@ -215,7 +230,7 @@ jobs:
 
       - name: 23. 上传固件到Releases
         uses: softprops/action-gh-release@v1
-        if: steps.tag.outputs.status == 'success' && !cancelled()
+        if: steps.check_gate.outputs.should_build == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -225,13 +240,14 @@ jobs:
 
       - name: 24. 删除旧的Workflow记录
         uses: Mattraks/delete-workflow-runs@v2
+        if: steps.check_gate.outputs.should_build == 'true'
         with:
           retain_days: 1
           keep_minimum_runs: 3
 
       - name: 25. 删除旧版本Releases
         uses: dev-drprasad/delete-older-releases@v0.1.0
-        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        if: steps.check_gate.outputs.should_build == 'true' && env.UPLOAD_RELEASE == 'true' && !cancelled()
         with:
           keep_latest: 3
           delete_tags: true
