@@ -10,7 +10,7 @@
 # updated version ref: https://github.com/dxdf/ActionsBuildOpenWRT
 
 
-name: lede最新源码
+name: lede没有三方源
 
 # 禁用自动触发，仅保留手动触发
 on:
@@ -48,7 +48,11 @@ jobs:
     - name: 克隆源码
       working-directory: ./
       run: |
-        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+        df -hT $PWD
+        echo "克隆 LEDE 源码..."
+        git clone $REPO_URL openwrt
+        git -C openwrt checkout 2ee5dbe
+        echo "✅ 源码克隆完成（内核6.12对应版本）"
 
     - name: 加载自定义软件源
       run: |
