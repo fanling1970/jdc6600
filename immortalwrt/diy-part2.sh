@@ -2,48 +2,77 @@
 set -e
 
 # ======================================================
-# 【最终版】kenzok8 dockerman 替换 + 依赖修复
-# （已移除 passwall/ddnsto/shadowsocks-rust 相关代码）
+# 【强制修复版】kenzok8 dockerman 替换 + 依赖修复
 # ======================================================
 echo "--- 开始替换 dockerman 并修复依赖 ---"
 
 git clone --depth=1 https://github.com/kenzok8/openwrt-packages.git temp_kenzok8
 
-# 1. 移除默认 dockerman
+# 1. 彻底清理旧版
 rm -rf feeds/luci/applications/luci-app-dockerman
 rm -rf feeds/luci/libs/luci-lib-docker
+rm -rf package/feeds/luci/luci-app-dockerman
+rm -rf package/feeds/luci/luci-lib-docker
 
 # 2. 复制 kenzok8 dockerman
 if [ -d "temp_kenzok8/luci-app-dockerman" ]; then
     cp -r temp_kenzok8/luci-app-dockerman feeds/luci/applications/luci-app-dockerman
+    echo "✅ dockerman UI 已复制"
+else
+    echo "❌ kenzok8 源中未找到 luci-app-dockerman，请检查仓库结构"
 fi
 
-# 3. 处理 luci-lib-docker
+# 3. 强制处理 luci-lib-docker
+# 优先从 kenzok8 获取，否则回退 ImmortalWRT 原版
+LIB_DOCKER_FOUND=false
 if [ -d "temp_kenzok8/luci-lib-docker" ]; then
     cp -r temp_kenzok8/luci-lib-docker feeds/luci/libs/luci-lib-docker
+    LIB_DOCKER_FOUND=true
     echo "✅ luci-lib-docker 使用 kenzok8 版本"
-else
+fi
+
+if [ "$LIB_DOCKER_FOUND" = false ]; then
     git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/luci.git temp_imm_luci
     cd temp_imm_luci && git sparse-checkout set libs/luci-lib-docker && cd ..
     if [ -d "temp_imm_luci/libs/luci-lib-docker" ]; then
         cp -r temp_imm_luci/libs/luci-lib-docker feeds/luci/libs/luci-lib-docker
+        LIB_DOCKER_FOUND=true
         echo "✅ luci-lib-docker 回退使用 ImmortalWRT 原版"
     fi
     rm -rf temp_imm_luci
 fi
 
-# 4. 修复 cgroupfs-mount 依赖缺失
-if grep -q "cgroupfs-mount" feeds/luci/applications/luci-app-dockerman/Makefile 2>/dev/null; then
-    ./scripts/feeds install cgroupfs-mount 2>/dev/null || {
-        sed -i '/cgroupfs-mount/d' feeds/luci/applications/luci-app-dockerman/Makefile
-        echo "⚠️ 已从 dockerman Makefile 移除 cgroupfs-mount 依赖"
-    }
+if [ "$LIB_DOCKER_FOUND" = false ]; then
+    echo "❌ 无法获取 luci-lib-docker，dockerman 将无法工作"
 fi
 
-# 5. 清理 & 刷新 feeds
+# 4. 【强制】无条件移除 cgroupfs-mount 依赖
+# 不再依赖 grep 判断，直接对所有可能的 Makefile 位置执行 sed
+for mkfile in \
+    feeds/luci/applications/luci-app-dockerman/Makefile \
+    package/feeds/luci/luci-app-dockerman/Makefile; do
+    if [ -f "$mkfile" ]; then
+        sed -i '/cgroupfs-mount/d' "$mkfile"
+        echo "✅ 已从 $mkfile 移除 cgroupfs-mount 依赖"
+    fi
+done
+
+# 5. 清理临时文件
 rm -rf temp_kenzok8
-./scripts/feeds update -i
-./scripts/feeds install -a
+
+# 6. 强制刷新 feeds 索引（关键！确保新复制的包被识别）
+echo "--- 强制刷新 feeds 索引 ---"
+./scripts/feeds update -i -f
+./scripts/feeds install -a -f
+
+# 7. 验证依赖是否解决
+echo "--- 验证 dockerman 依赖 ---"
+if ./scripts/feeds info luci-app-dockerman | grep -q "luci-lib-docker"; then
+    echo "✅ luci-lib-docker 已在 feeds 索引中"
+else
+    echo "⚠️ luci-lib-docker 未在索引中，尝试手动安装..."
+    ./scripts/feeds install luci-lib-docker
+fi
 
 echo "--- dockerman 替换及依赖修复完成 ---"
 
