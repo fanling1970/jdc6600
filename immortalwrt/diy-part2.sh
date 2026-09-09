@@ -1,6 +1,48 @@
 #!/usr/bin/env bash
 set -e
 
+# ======================================================
+# 【新增】使用 kenzok8 源替换 dockerman 并添加额外插件
+# 必须在 feeds install 之前执行
+# ======================================================
+echo "--- 开始替换 dockerman 并添加 kenzok8 插件 ---"
+
+# 1. 克隆 kenzok8 源（仅浅克隆加速）
+git clone --depth=1 https://github.com/kenzok8/openwrt-packages.git temp_kenzok8
+
+# 2. 移除 ImmortalWRT 默认的 dockerman 相关组件
+rm -rf feeds/luci/applications/luci-app-dockerman
+rm -rf feeds/luci/libs/luci-lib-docker
+# 注意：docker-ce 引擎保留 ImmortalWRT 原版，避免 IPQ6000 兼容性问题
+
+# 3. 从 kenzok8 源复制 dockerman UI 和依赖库
+if [ -d "temp_kenzok8/luci-app-dockerman" ]; then
+    cp -r temp_kenzok8/luci-app-dockerman feeds/luci/applications/luci-app-dockerman
+    echo "✅ dockerman UI 已替换为 kenzok8 版本"
+fi
+
+if [ -d "temp_kenzok8/luci-lib-docker" ]; then
+    cp -r temp_kenzok8/luci-lib-docker feeds/luci/libs/luci-lib-docker
+    echo "✅ luci-lib-docker 已替换为 kenzok8 版本"
+fi
+
+# 4. 【可选】从 kenzok8 添加其他常用插件（按需取消注释）
+# 以下为 kenzok8 源中与 SSR Plus+ 互补的常用插件示例：
+cp -r temp_kenzok8/luci-app-quickstart feeds/luci/applications/luci-app-quickstart 2>/dev/null && echo "✅ quickstart 已添加"
+cp -r temp_kenzok8/luci-app-store feeds/luci/applications/luci-app-store 2>/dev/null && echo "✅ store 已添加"
+cp -r temp_kenzok8/luci-app-istorex feeds/luci/applications/luci-app-istorex 2>/dev/null && echo "✅ istorex 已添加"
+cp -r temp_kenzok8/luci-app-ddnsto feeds/luci/applications/luci-app-ddnsto 2>/dev/null && echo "✅ ddnsto 已添加"
+# cp -r temp_kenzok8/luci-app-passwall feeds/luci/applications/luci-app-passwall 2>/dev/null && echo "✅ passwall 已添加"
+
+# 5. 清理临时目录
+rm -rf temp_kenzok8
+
+# 6. 重新更新并安装 feeds 使替换生效
+./scripts/feeds update -i
+./scripts/feeds install -a
+
+echo "--- kenzok8 插件替换/添加完成 ---"
+
 # 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
 
