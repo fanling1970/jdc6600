@@ -2,76 +2,76 @@
 set -e
 
 # ======================================================
-# 【强制修复版】kenzok8 dockerman 替换 + 依赖修复
+# 【终极修复】dockerman + luci-lib-docker 完整依赖链
 # ======================================================
 echo "--- 开始替换 dockerman 并修复依赖 ---"
 
 git clone --depth=1 https://github.com/kenzok8/openwrt-packages.git temp_kenzok8
 
-# 1. 彻底清理旧版
+# 1. 彻底清理旧版残留
 rm -rf feeds/luci/applications/luci-app-dockerman
 rm -rf feeds/luci/libs/luci-lib-docker
 rm -rf package/feeds/luci/luci-app-dockerman
 rm -rf package/feeds/luci/luci-lib-docker
 
-# 2. 复制 kenzok8 dockerman
+# 2. 复制 kenzok8 dockerman UI
 if [ -d "temp_kenzok8/luci-app-dockerman" ]; then
     cp -r temp_kenzok8/luci-app-dockerman feeds/luci/applications/luci-app-dockerman
     echo "✅ dockerman UI 已复制"
 else
-    echo "❌ kenzok8 源中未找到 luci-app-dockerman，请检查仓库结构"
+    echo "❌ kenzok8 源中未找到 luci-app-dockerman"
 fi
 
-# 3. 强制处理 luci-lib-docker
-# 优先从 kenzok8 获取，否则回退 ImmortalWRT 原版
-LIB_DOCKER_FOUND=false
-if [ -d "temp_kenzok8/luci-lib-docker" ]; then
-    cp -r temp_kenzok8/luci-lib-docker feeds/luci/libs/luci-lib-docker
-    LIB_DOCKER_FOUND=true
-    echo "✅ luci-lib-docker 使用 kenzok8 版本"
-fi
-
-if [ "$LIB_DOCKER_FOUND" = false ]; then
-    git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/luci.git temp_imm_luci
-    cd temp_imm_luci && git sparse-checkout set libs/luci-lib-docker && cd ..
-    if [ -d "temp_imm_luci/libs/luci-lib-docker" ]; then
-        cp -r temp_imm_luci/libs/luci-lib-docker feeds/luci/libs/luci-lib-docker
-        LIB_DOCKER_FOUND=true
-        echo "✅ luci-lib-docker 回退使用 ImmortalWRT 原版"
+# 3. 【关键】从独立仓库获取 luci-lib-docker
+# ImmortalWRT 新版已移除该包，需从专用备份仓库拉取
+LUCI_LIB_DOCKER_URL="https://github.com/lisaac/luci-lib-docker.git"
+if git clone --depth=1 "$LUCI_LIB_DOCKER_URL" temp_luci_lib_docker 2>/dev/null; then
+    if [ -d "temp_luci_lib_docker" ] && [ "$(ls -A temp_luci_lib_docker)" ]; then
+        cp -r temp_luci_lib_docker feeds/luci/libs/luci-lib-docker
+        echo "✅ luci-lib-docker 已从 lisaac/luci-lib-docker 获取"
+    else
+        echo "⚠️ lisaac 仓库为空，尝试备用源..."
+        rm -rf temp_luci_lib_docker
     fi
-    rm -rf temp_imm_luci
+else
+    echo "⚠️ lisaac 仓库克隆失败，尝试备用源..."
 fi
 
-if [ "$LIB_DOCKER_FOUND" = false ]; then
-    echo "❌ 无法获取 luci-lib-docker，dockerman 将无法工作"
+# 备用方案：从 ImmortalWRT 旧版 tag 获取
+if [ ! -d "feeds/luci/libs/luci-lib-docker" ] || [ ! -f "feeds/luci/libs/luci-lib-docker/Makefile" ]; then
+    git clone --depth=1 --branch openwrt-23.05 \
+        --filter=blob:none --sparse \
+        https://github.com/immortalwrt/luci.git temp_imm_old_luci
+    cd temp_imm_old_luci && git sparse-checkout set libs/luci-lib-docker && cd ..
+    if [ -d "temp_imm_old_luci/libs/luci-lib-docker" ] && [ -f "temp_imm_old_luci/libs/luci-lib-docker/Makefile" ]; then
+        cp -r temp_imm_old_luci/libs/luci-lib-docker feeds/luci/libs/luci-lib-docker
+        echo "✅ luci-lib-docker 已从 ImmortalWRT 23.05 分支获取"
+    else
+        echo "❌ 所有 luci-lib-docker 来源均失败！"
+    fi
+    rm -rf temp_imm_old_luci
 fi
 
-# 4. 【强制】无条件移除 cgroupfs-mount 依赖
-# 不再依赖 grep 判断，直接对所有可能的 Makefile 位置执行 sed
-for mkfile in \
-    feeds/luci/applications/luci-app-dockerman/Makefile \
-    package/feeds/luci/luci-app-dockerman/Makefile; do
+rm -rf temp_luci_lib_docker
+
+# 4. 强制移除 cgroupfs-mount 依赖
+for mkfile in feeds/luci/applications/luci-app-dockerman/Makefile; do
     if [ -f "$mkfile" ]; then
         sed -i '/cgroupfs-mount/d' "$mkfile"
-        echo "✅ 已从 $mkfile 移除 cgroupfs-mount 依赖"
+        echo "✅ 已移除 cgroupfs-mount 依赖"
     fi
 done
 
-# 5. 清理临时文件
+# 5. 清理 & 强制刷新索引
 rm -rf temp_kenzok8
-
-# 6. 强制刷新 feeds 索引（关键！确保新复制的包被识别）
-echo "--- 强制刷新 feeds 索引 ---"
 ./scripts/feeds update -i -f
 ./scripts/feeds install -a -f
 
-# 7. 验证依赖是否解决
-echo "--- 验证 dockerman 依赖 ---"
-if ./scripts/feeds info luci-app-dockerman | grep -q "luci-lib-docker"; then
-    echo "✅ luci-lib-docker 已在 feeds 索引中"
+# 6. 验证
+if ./scripts/feeds info luci-lib-docker >/dev/null 2>&1; then
+    echo "✅ luci-lib-docker 已成功注册到 feeds 索引"
 else
-    echo "⚠️ luci-lib-docker 未在索引中，尝试手动安装..."
-    ./scripts/feeds install luci-lib-docker
+    echo "❌ luci-lib-docker 仍未注册，编译将失败"
 fi
 
 echo "--- dockerman 替换及依赖修复完成 ---"
