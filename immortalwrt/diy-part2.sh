@@ -1,15 +1,39 @@
 #!/usr/bin/env bash
 set -e
-
 # 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
-
 # 默认网关 ip 地址修改
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
-
-# 添加aurora主题
+# ===================== 主题配置 Aurora + Argon 双主题 =====================
+# 添加aurora主题（外部拉取）
 echo "CONFIG_PACKAGE_luci-app-aurora-config=y" >> .config
 echo "CONFIG_PACKAGE_luci-theme-aurora=y" >> .config
+# 添加argon主题（源码自带）
+echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
+echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+
+# =====================【核心修复1：删除两套主题配置插件自带uci-defaults，消除开机脚本冲突】=====================
+# 容错写法：目录存在才清理uci-defaults，不存在跳过，不会中断编译
+[ -d package/luci-app-argon-config/root/etc/uci-defaults ] && rm -f package/luci-app-argon-config/root/etc/uci-defaults/*
+[ -d package/luci-app-aurora-config/root/etc/uci-defaults ] && rm -f package/luci-app-aurora-config/root/etc/uci-defaults/*
+# 清除固件预置daemon.json，防止刷机自带硬编码/opt
+rm -f files/etc/docker/daemon.json
+
+# =====================【核心修复2：修补三方Dockerman启动脚本，读取uci data_root】=====================
+# 三方dockerman在 package/luci-app-dockerman，增加目录判断容错
+if [ -d package/luci-app-dockerman/root/etc/init.d ]; then
+    echo "✅ 找到三方Dockerman，开始修补dockerd init脚本"
+    # 备份原始dockerd init脚本，再打补丁
+    cp package/luci-app-dockerman/root/etc/init.d/dockerd package/luci-app-dockerman/root/etc/init.d/dockerd.bak
+    # 在start()函数开头读取uci data_root变量
+    sed -i '/start() {/a\        DATA_ROOT=$(uci get dockerd.globals.data_root)' package/luci-app-dockerman/root/etc/init.d/dockerd
+    # procd启动命令追加--data-root参数
+    sed -i 's/procd_open_instance/procd_append_param command --data-root ${DATA_ROOT}\n        procd_open_instance/' package/luci-app-dockerman/root/etc/init.d/dockerd
+    # 确保脚本可执行权限
+    chmod +x package/luci-app-dockerman/root/etc/init.d/dockerd
+else
+    echo "⚠️ 未找到package/luci-app-dockerman，跳过Dockerman脚本修补"
+fi
 
 # ======================================
 # 无线网络配置 - 已验证的LEDE配置
@@ -18,10 +42,8 @@ echo "--- 应用已验证的LEDE无线配置 ---"
 mkdir -p package/base-files/files/etc/uci-defaults
 cat > package/base-files/files/etc/uci-defaults/99-custom-wireless << 'WIFIEOF'
 #!/bin/sh
-
 # JDC_AX6600 无线配置 - 从LEDE移植已验证
 # 基于实际硬件测试，接口编号和配置已验证有效
-
 # radio0: 5G (内置 SoC WiFi) - 已验证
 uci set wireless.radio0.disabled='0'
 uci set wireless.radio0.channel='149'
@@ -33,7 +55,6 @@ uci set wireless.default_radio0.ssid='JDC_AX6600_5G'
 uci set wireless.default_radio0.key='BUZHIDAOWA'
 uci set wireless.default_radio0.encryption='psk2'
 uci set wireless.default_radio0.network='lan'
-
 # radio1: 2.4G (内置 SoC WiFi 第二个频段) - 已验证
 uci set wireless.radio1.disabled='0'
 uci set wireless.radio1.channel='6'
@@ -45,7 +66,6 @@ uci set wireless.default_radio1.ssid='JDC_AX6600_2.4G'
 uci set wireless.default_radio1.key='BUZHIDAOWA'
 uci set wireless.default_radio1.encryption='psk2'
 uci set wireless.default_radio1.network='lan'
-
 # radio2: 5G (PCIe 外置网卡) - 已验证
 uci set wireless.radio2.disabled='0'
 uci set wireless.radio2.channel='44'
@@ -57,16 +77,12 @@ uci set wireless.default_radio2.ssid='JDC_AX6600_5G2'
 uci set wireless.default_radio2.key='BUZHIDAOWA'
 uci set wireless.default_radio2.encryption='psk2'
 uci set wireless.default_radio2.network='lan'
-
 uci commit wireless
-
 echo "无线配置已应用：" > /tmp/wireless-setup.log
 uci show wireless | grep -E "(radio[0-9]\.(disabled|channel|band|htmode)|default_radio[0-9]\.ssid)" >> /tmp/wireless-setup.log
 chmod 600 /etc/config/wireless 2>/dev/null
-
 exit 0
 WIFIEOF
-
 chmod +x package/base-files/files/etc/uci-defaults/99-custom-wireless
 echo "✅ LEDE无线配置已移植"
 
@@ -107,7 +123,6 @@ echo ""
 echo "4. 无线网络状态:"
 ifconfig | grep -A1 "wlan"
 STATUSEOF
-
 chmod +x package/base-files/files/usr/bin/wifi-status
 echo "✅ 无线状态检查脚本已添加"
 
@@ -138,44 +153,36 @@ echo "--- 部署docker防火墙hotplug脚本 ---"
 mkdir -p files/etc/hotplug.d/net
 cat > files/etc/hotplug.d/net/90-docker-br-attach << 'DOCKER_FW_EOF'
 #!/bin/sh
-
 do_fw_setup() {
     local retry=0
     while [ $retry -lt 3 ]; do
         if uci show firewall.docker >/dev/null 2>&1; then
             break
         fi
-
         uci add firewall zone
         uci rename firewall.@zone[-1]="docker"
-
         uci set firewall.docker.name='docker'
         uci set firewall.docker.input='ACCEPT'
         uci set firewall.docker.output='ACCEPT'
         uci set firewall.docker.forward='ACCEPT'
         uci set firewall.docker.masq='1'
-
         uci del firewall.docker.network
         uci set firewall.docker.device='docker0'
         uci add_list firewall.docker.device='br-+'
-
         if ! uci show firewall.fwd_docker_wan >/dev/null 2>&1; then
             uci add firewall forwarding
             uci rename firewall.@forwarding[-1]="fwd_docker_wan"
             uci set firewall.fwd_docker_wan.src="docker"
             uci set firewall.fwd_docker_wan.dest="wan"
         fi
-
         if ! uci show firewall.fwd_lan_docker >/dev/null 2>&1; then
             uci add firewall forwarding
             uci rename firewall.@forwarding[-1]="fwd_lan_docker"
             uci set firewall.fwd_lan_docker.src="lan"
             uci set firewall.fwd_lan_docker.dest="docker"
         fi
-
         uci commit firewall
         logger -t docker_fw "docker防火墙uci配置已持久写入磁盘，不刷新运行时防火墙"
-
         if uci show firewall.docker >/dev/null 2>&1; then
             return 0
         fi
@@ -184,7 +191,6 @@ do_fw_setup() {
     done
     logger -t docker_fw "docker防火墙uci写入结束"
 }
-
 case "$ACTION" in
 add)
     if [ "$INTERFACE" = "docker0" ]; then
@@ -196,7 +202,6 @@ add)
 remove)
 ;;
 esac
-
 if [ "x$1" = "xrun" ]; then
     do_fw_setup
 fi
@@ -215,7 +220,6 @@ cat > files/etc/rc.d/S99dockerfw << 'EOF'
 ) &
 EOF
 chmod 755 files/etc/rc.d/S99dockerfw
-
 
 # ===== CPU 温度/架构双行脚本（刷机首次启动时自动创建） =====
 mkdir -p package/base-files/files/etc/uci-defaults
