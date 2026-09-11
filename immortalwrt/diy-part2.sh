@@ -1,88 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
-# ======================================================
-# 【终极修复】dockerman + luci-lib-docker 完整依赖链
-# ======================================================
-echo "--- 开始替换 dockerman 并修复依赖 ---"
-
-git clone --depth=1 https://github.com/kenzok8/openwrt-packages.git temp_kenzok8
-
-# 1. 彻底清理旧版残留
-rm -rf feeds/luci/applications/luci-app-dockerman
-rm -rf feeds/luci/libs/luci-lib-docker
-rm -rf package/feeds/luci/luci-app-dockerman
-rm -rf package/feeds/luci/luci-lib-docker
-
-# 2. 复制 kenzok8 dockerman UI
-if [ -d "temp_kenzok8/luci-app-dockerman" ]; then
-    cp -r temp_kenzok8/luci-app-dockerman feeds/luci/applications/luci-app-dockerman
-    echo "✅ dockerman UI 已复制"
-else
-    echo "❌ kenzok8 源中未找到 luci-app-dockerman"
-fi
-
-# 3. 【关键】从独立仓库获取 luci-lib-docker
-# ImmortalWRT 新版已移除该包，需从专用备份仓库拉取
-LUCI_LIB_DOCKER_URL="https://github.com/lisaac/luci-lib-docker.git"
-if git clone --depth=1 "$LUCI_LIB_DOCKER_URL" temp_luci_lib_docker 2>/dev/null; then
-    if [ -d "temp_luci_lib_docker" ] && [ "$(ls -A temp_luci_lib_docker)" ]; then
-        cp -r temp_luci_lib_docker feeds/luci/libs/luci-lib-docker
-        echo "✅ luci-lib-docker 已从 lisaac/luci-lib-docker 获取"
-    else
-        echo "⚠️ lisaac 仓库为空，尝试备用源..."
-        rm -rf temp_luci_lib_docker
-    fi
-else
-    echo "⚠️ lisaac 仓库克隆失败，尝试备用源..."
-fi
-
-# 备用方案：从 ImmortalWRT 旧版 tag 获取
-if [ ! -d "feeds/luci/libs/luci-lib-docker" ] || [ ! -f "feeds/luci/libs/luci-lib-docker/Makefile" ]; then
-    git clone --depth=1 --branch openwrt-23.05 \
-        --filter=blob:none --sparse \
-        https://github.com/immortalwrt/luci.git temp_imm_old_luci
-    cd temp_imm_old_luci && git sparse-checkout set libs/luci-lib-docker && cd ..
-    if [ -d "temp_imm_old_luci/libs/luci-lib-docker" ] && [ -f "temp_imm_old_luci/libs/luci-lib-docker/Makefile" ]; then
-        cp -r temp_imm_old_luci/libs/luci-lib-docker feeds/luci/libs/luci-lib-docker
-        echo "✅ luci-lib-docker 已从 ImmortalWRT 23.05 分支获取"
-    else
-        echo "❌ 所有 luci-lib-docker 来源均失败！"
-    fi
-    rm -rf temp_imm_old_luci
-fi
-
-rm -rf temp_luci_lib_docker
-
-# 4. 强制移除 cgroupfs-mount 依赖
-for mkfile in feeds/luci/applications/luci-app-dockerman/Makefile; do
-    if [ -f "$mkfile" ]; then
-        sed -i '/cgroupfs-mount/d' "$mkfile"
-        echo "✅ 已移除 cgroupfs-mount 依赖"
-    fi
-done
-
-# 5. 清理 & 强制刷新索引
-rm -rf temp_kenzok8
-./scripts/feeds update -i -f
-./scripts/feeds install -a -f
-
-# 6. 验证
-if ./scripts/feeds info luci-lib-docker >/dev/null 2>&1; then
-    echo "✅ luci-lib-docker 已成功注册到 feeds 索引"
-else
-    echo "❌ luci-lib-docker 仍未注册，编译将失败"
-fi
-
-echo "--- dockerman 替换及依赖修复完成 ---"
-
 # 修改 device 设备名称
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
 
 # 默认网关 ip 地址修改
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 
-
+# 添加aurora主题
+echo "CONFIG_PACKAGE_luci-app-aurora-config=y" >> .config
+echo "CONFIG_PACKAGE_luci-theme-aurora=y" >> .config
 
 # ======================================
 # 无线网络配置 - 已验证的LEDE配置
