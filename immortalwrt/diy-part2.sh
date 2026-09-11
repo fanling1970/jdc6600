@@ -22,18 +22,29 @@ rm -f files/etc/docker/daemon.json
 # =====================【核心修复2：修补三方Dockerman启动脚本，读取uci data_root】=====================
 # 三方dockerman在 package/luci-app-dockerman，增加目录判断容错
 if [ -d package/luci-app-dockerman/root/etc/init.d ]; then
-    echo "✅ 找到三方Dockerman，开始修补dockerd init脚本"
-    # 备份原始dockerd init脚本，再打补丁
-    cp package/luci-app-dockerman/root/etc/init.d/dockerd package/luci-app-dockerman/root/etc/init.d/dockerd.bak
-    # 在start()函数开头读取uci data_root变量
-    sed -i '/start() {/a\        DATA_ROOT=$(uci get dockerd.globals.data_root)' package/luci-app-dockerman/root/etc/init.d/dockerd
-    # procd启动命令追加--data-root参数
-    sed -i 's/procd_open_instance/procd_append_param command --data-root ${DATA_ROOT}\n        procd_open_instance/' package/luci-app-dockerman/root/etc/init.d/dockerd
-    # 确保脚本可执行权限
-    chmod +x package/luci-app-dockerman/root/etc/init.d/dockerd
+    echo "✅ 找到三方Dockerman，开始修补init脚本"
+    # 新版lisaac dockerman 脚本名字是 dockerman，老版本叫dockerd
+    if [ -f package/luci-app-dockerman/root/etc/init.d/dockerd ]; then
+        init_file="package/luci-app-dockerman/root/etc/init.d/dockerd"
+    elif [ -f package/luci-app-dockerman/root/etc/init.d/dockerman ]; then
+        init_file="package/luci-app-dockerman/root/etc/init.d/dockerman"
+    else
+        echo "⚠️ 未找到dockerd/dockerman init文件，跳过修补"
+    fi
+
+    if [ -n "${init_file}" ]; then
+        cp "${init_file}" "${init_file}.bak"
+        # 在start()函数开头读取uci data_root
+        sed -i '/start() {/a\        DATA_ROOT=$(uci get dockerd.globals.data_root 2>/dev/null)' "${init_file}"
+        # 给dockerd命令追加 --data-root 参数
+        sed -i 's/procd_open_instance/procd_append_param command --data-root ${DATA_ROOT}\n        procd_open_instance/' "${init_file}"
+        chmod +x "${init_file}"
+        echo "✅ init脚本修补完成：${init_file}"
+    fi
 else
     echo "⚠️ 未找到package/luci-app-dockerman，跳过Dockerman脚本修补"
 fi
+
 
 # ======================================
 # 无线网络配置 - 已验证的LEDE配置
