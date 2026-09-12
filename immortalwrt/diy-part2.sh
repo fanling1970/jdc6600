@@ -4,26 +4,50 @@ set -e
 sed -i "s/hostname='.*'/hostname='immortalwrt'/g" package/base-files/files/bin/config_generate
 # 默认网关 ip 地址修改
 sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
+
 # ===================== 主题配置 Aurora + Argon 双主题 =====================
-# 添加aurora主题（外部拉取）
 echo "CONFIG_PACKAGE_luci-app-aurora-config=y" >> .config
 echo "CONFIG_PACKAGE_luci-theme-aurora=y" >> .config
-# 添加argon主题（源码自带）
 echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
 echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
 
-# =====================【核心修复1：删除两套主题配置插件自带uci-defaults，消除开机脚本冲突】=====================
-# 容错写法：目录存在才清理uci-defaults，不存在跳过，不会中断编译
-[ -d package/luci-app-argon-config/root/etc/uci-defaults ] && rm -f package/luci-app-argon-config/root/etc/uci-defaults/*
-[ -d package/luci-app-aurora-config/root/etc/uci-defaults ] && rm -f package/luci-app-aurora-config/root/etc/uci-defaults/*
-# 清除固件预置daemon.json，防止刷机自带硬编码/opt
+# ===== 不再删除aurora/argon自带uci-defaults脚本（核心修复！） =====
+# [ -d package/luci-app-aurora-config/root/etc/uci-defaults ] && rm -f package/luci-app-aurora-config/root/etc/uci-defaults/*
+# [ -d package/luci-app-argon-config/root/etc/uci-defaults ] && rm -f package/luci-app-argon-config/root/etc/uci-defaults/*
+
+# uci-defaults：固件首次开机自动创建aurora、argon基础配置，防止RPC ubus code4
+mkdir -p package/base-files/files/etc/uci-defaults
+cat > package/base-files/files/etc/uci-defaults/95-init-theme-config <<'THEME_INIT'
+#!/bin/sh
+# Aurora
+[ ! -f /etc/config/aurora ] && cat > /etc/config/aurora <<'CONF'
+config general
+CONF
+
+# Argon
+[ ! -f /etc/config/argon ] && cat > /etc/config/argon <<'CONF'
+config general
+CONF
+exit 0
+THEME_INIT
+chmod +x package/base-files/files/etc/uci-defaults/95-init-theme-config
+
+# 最后设置默认主题，放在后面执行，避免两个主题插件互相覆盖
+cat > package/base-files/files/etc/uci-defaults/98-set-default-theme <<'SET_THEME'
+#!/bin/sh
+# 默认开机主题：/luci-static/aurora 或 /luci-static/argon
+uci set luci.main.mediaurlbase='/luci-static/aurora'
+uci commit luci
+exit 0
+SET_THEME
+chmod +x package/base-files/files/etc/uci-defaults/98-set-default-theme
+
+# 清除固件预置daemon.json，防止docker硬编码/opt
 rm -f files/etc/docker/daemon.json
 
 # =====================【核心修复2：修补三方Dockerman启动脚本，读取uci data_root】=====================
-# 三方dockerman在 package/luci-app-dockerman，增加目录判断容错
 if [ -d package/luci-app-dockerman/root/etc/init.d ]; then
     echo "✅ 找到三方Dockerman，开始修补init脚本"
-    # 新版lisaac dockerman 脚本名字是 dockerman，老版本叫dockerd
     if [ -f package/luci-app-dockerman/root/etc/init.d/dockerd ]; then
         init_file="package/luci-app-dockerman/root/etc/init.d/dockerd"
     elif [ -f package/luci-app-dockerman/root/etc/init.d/dockerman ]; then
@@ -34,9 +58,7 @@ if [ -d package/luci-app-dockerman/root/etc/init.d ]; then
 
     if [ -n "${init_file}" ]; then
         cp "${init_file}" "${init_file}.bak"
-        # 在start()函数开头读取uci data_root
         sed -i '/start() {/a\        DATA_ROOT=$(uci get dockerd.globals.data_root 2>/dev/null)' "${init_file}"
-        # 给dockerd命令追加 --data-root 参数
         sed -i 's/procd_open_instance/procd_append_param command --data-root ${DATA_ROOT}\n        procd_open_instance/' "${init_file}"
         chmod +x "${init_file}"
         echo "✅ init脚本修补完成：${init_file}"
