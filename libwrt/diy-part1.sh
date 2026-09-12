@@ -9,6 +9,10 @@ echo "=== [DIY-P1] 开始配置 feeds 源 ==="
 # ======================================
 echo "--- 添加 feeds 源 ---"
 
+# ---- Aurora 主题：配置中心 + 主题本体（必须成对添加） ----
+git clone --depth 1 https://github.com/eamonxg/luci-app-aurora-config.git package/luci-app-aurora-config
+git clone --depth 1 https://github.com/eamonxg/luci-theme-aurora.git package/luci-theme-aurora
+
 # 在 diy-part1.sh 的 feeds 源部分添加
 # echo 'src-git openclash https://github.com/vernesong/OpenClash.git' >> feeds.conf.default
 
