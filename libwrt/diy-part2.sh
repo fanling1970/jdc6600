@@ -1,24 +1,74 @@
 #!/bin/bash
 # diy-part2.sh - 在 feeds install 之后执行 (libwrt 源码适配版)
+set -e
+
 echo "=== [DIY-P2] 开始配置第三方包和系统设置 ==="
+
+# ===================== 主题配置 Aurora + Argon 双主题 =====================
+echo "CONFIG_PACKAGE_luci-app-aurora-config=y" >> .config
+echo "CONFIG_PACKAGE_luci-theme-aurora=y" >> .config
+echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
+echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+
+# ===== 不再删除aurora/argon自带uci-defaults脚本（核心修复！） =====
+# [ -d package/luci-app-aurora-config/root/etc/uci-defaults ] && rm -f package/luci-app-aurora-config/root/etc/uci-defaults/*
+# [ -d package/luci-app-argon-config/root/etc/uci-defaults ] && rm -f package/luci-app-argon-config/root/etc/uci-defaults/*
+
+# uci-defaults：固件首次开机自动创建aurora、argon基础配置，防止RPC ubus code4
+mkdir -p package/base-files/files/etc/uci-defaults
+cat > package/base-files/files/etc/uci-defaults/95-init-theme-config <<'THEME_INIT'
+#!/bin/sh
+# Aurora
+[ ! -f /etc/config/aurora ] && cat > /etc/config/aurora <<'CONF'
+config general
+CONF
+
+# Argon
+[ ! -f /etc/config/argon ] && cat > /etc/config/argon <<'CONF'
+config general
+CONF
+exit 0
+THEME_INIT
+chmod +x package/base-files/files/etc/uci-defaults/95-init-theme-config
+
+# 最后设置默认主题，放在后面执行，避免两个主题插件互相覆盖
+cat > package/base-files/files/etc/uci-defaults/98-set-default-theme <<'SET_THEME'
+#!/bin/sh
+# 默认开机主题：/luci-static/aurora 或 /luci-static/argon
+uci set luci.main.mediaurlbase='/luci-static/aurora'
+uci commit luci
+exit 0
+SET_THEME
+chmod +x package/base-files/files/etc/uci-defaults/98-set-default-theme
+
+# 清除固件预置daemon.json，防止docker硬编码/opt
+rm -f files/etc/docker/daemon.json
+
+# =====================【核心修复2：修补三方Dockerman启动脚本，读取uci data_root】=====================
+if [ -d package/luci-app-dockerman/root/etc/init.d ]; then
+    echo "✅ 找到三方Dockerman，开始修补init脚本"
+    if [ -f package/luci-app-dockerman/root/etc/init.d/dockerd ]; then
+        init_file="package/luci-app-dockerman/root/etc/init.d/dockerd"
+    elif [ -f package/luci-app-dockerman/root/etc/init.d/dockerman ]; then
+        init_file="package/luci-app-dockerman/root/etc/init.d/dockerman"
+    else
+        echo "⚠️ 未找到dockerd/dockerman init文件，跳过修补"
+    fi
+
+    if [ -n "${init_file}" ]; then
+        cp "${init_file}" "${init_file}.bak"
+        sed -i '/start() {/a\        DATA_ROOT=$(uci get dockerd.globals.data_root 2>/dev/null)' "${init_file}"
+        sed -i 's/procd_open_instance/procd_append_param command --data-root ${DATA_ROOT}\n        procd_open_instance/' "${init_file}"
+        chmod +x "${init_file}"
+        echo "✅ init脚本修补完成：${init_file}"
+    fi
+else
+    echo "⚠️ 未找到package/luci-app-dockerman，跳过Dockerman脚本修补"
+fi
 
 # ======================================
 # 1. 克隆第三方包（不在 feeds 中的包）
 # ======================================
-echo "--- 克隆 Argon 主题 ---"
-rm -rf package/luci-theme-argon
-git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon || {
-    echo "❌ Argon 主题拉取失败"
-    exit 1
-}
-
-echo "--- 克隆 Argon 配置插件 ---"
-rm -rf package/luci-app-argon-config
-git clone --depth=1 https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config || {
-    echo "❌ Argon 配置插件拉取失败"
-    exit 1
-}
-echo "✅ Argon 主题克隆完成"
 
 echo "--- 克隆 Athena LED 控制插件 ---"
 rm -rf package/luci-app-athena-led
